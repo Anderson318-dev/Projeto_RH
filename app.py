@@ -11,9 +11,12 @@ def carregar_dados():
     df_turnover = pd.read_excel("BI_RH.xlsx", sheet_name="Turn Over")
     df_admitidos = pd.read_excel("BI_RH.xlsx", sheet_name="Admitidos")
 
-    # Tratamento Turnover
+    # --- Tratamento Turnover ---
+    # Remove linhas onde a data está vazia para evitar o erro de comparação
+    df_turnover = df_turnover.dropna(subset=['Mês_Ano'])
+    
     df_turnover['Mês_Ano'] = pd.to_datetime(df_turnover['Mês_Ano'])
-    df_turnover['Ano'] = df_turnover['Mês_Ano'].dt.year
+    df_turnover['Ano'] = df_turnover['Mês_Ano'].dt.year.astype(int)
     df_turnover['Mes_Nome'] = df_turnover['Mês_Ano'].dt.strftime('%m - %b')
     
     for col in ['Admissões', 'Desligamentos', 'Colaboradores']:
@@ -22,15 +25,17 @@ def carregar_dados():
     # Cálculo Turnover Mensal
     df_turnover['Turnover %'] = (((df_turnover['Admissões'] + df_turnover['Desligamentos']) / 2) / df_turnover['Colaboradores']) * 100
 
-    # Tratamento Admitidos/Demitidos/Afastados
-    df_admitidos['ADMISSAO'] = pd.to_datetime(df_admitidos['ADMISSAO'])
+    # --- Tratamento Admitidos ---
+    df_admitidos['ADMISSAO'] = pd.to_datetime(df_admitidos['ADMISSAO'], errors='coerce')
     df_admitidos['DTDEMISSAO'] = pd.to_datetime(df_admitidos['DTDEMISSAO'], errors='coerce')
     
-    # Identificar Ativos e Afastados (Exemplo: Se houver coluna SITUACAO ou similar, use ela. 
-    # Aqui vamos considerar 'Afastado' quem não tem data de demissão e você marcar no Excel, 
-    # ou se houver uma coluna específica. Vou criar uma lógica baseada em 'SITUACAO' se existir)
+    # Garante que EMPRESA e SITUACAO sejam sempre texto (evita erro de comparação float/str)
+    df_admitidos['EMPRESA'] = df_admitidos['EMPRESA'].astype(str).replace('nan', 'Não Informado')
+    
     if 'SITUACAO' not in df_admitidos.columns:
-        df_admitidos['SITUACAO'] = 'Ativo' # Default
+        df_admitidos['SITUACAO'] = 'Ativo'
+    else:
+        df_admitidos['SITUACAO'] = df_admitidos['SITUACAO'].astype(str).replace('nan', 'Ativo')
         
     return df_turnover, df_admitidos
 
@@ -42,27 +47,25 @@ try:
     # --- SIDEBAR: FILTROS ---
     st.sidebar.header("Filtros de Visão")
     
-    # Filtro por Empresa
-    lista_empresas = sorted(df_a['EMPRESA'].unique())
+    # Filtro por Empresa (Garante que a lista é ordenada corretamente)
+    lista_empresas = sorted([x for x in df_a['EMPRESA'].unique() if x != 'Não Informado'])
     empresa_sel = st.sidebar.multiselect("Selecione a Empresa", options=lista_empresas, default=lista_empresas)
     
     # Filtro por Ano
     lista_anos = sorted(df_t['Ano'].unique(), reverse=True)
     ano_sel = st.sidebar.selectbox("Ano de Referência", options=lista_anos)
 
-    # Filtro por Mês
-    lista_meses = sorted(df_t[df_t['Ano'] == ano_sel]['Mes_Nome'].unique())
+    # Filtro por Mês (Filtrado pelo Ano escolhido)
+    df_meses_ano = df_t[df_t['Ano'] == ano_sel]
+    lista_meses = sorted(df_meses_ano['Mes_Nome'].unique())
     mes_sel = st.sidebar.selectbox("Mês de Referência", options=lista_meses)
 
     # --- FILTRAGEM DOS DADOS ---
-    # Filtrando a base de admitidos por empresa
     df_a_filt = df_a[df_a['EMPRESA'].isin(empresa_sel)]
-    
-    # Filtrando a base de turnover pelo ano/mês selecionado para os KPIs
     df_t_periodo = df_t[(df_t['Ano'] == ano_sel) & (df_t['Mes_Nome'] == mes_sel)]
-    df_t_ano = df_t[df_t['Ano'] == ano_sel] # Para o gráfico anual
+    df_t_ano = df_t[df_t['Ano'] == ano_sel]
 
-    # --- METRICAS (KPIs) ---
+    # --- MÉTRICAS (KPIs) ---
     st.subheader(f"Resultados de {mes_sel}/{ano_sel}")
     c1, c2, c3, c4 = st.columns(4)
     
@@ -73,7 +76,7 @@ try:
         c3.metric("Desligamentos", int(linha['Desligamentos']))
         c4.metric("Turnover Mensal", f"{linha['Turnover %']:.2f}%")
     else:
-        st.warning("Sem dados para o mês selecionado.")
+        st.warning("Sem dados para o período selecionado.")
 
     # --- LINHA 2: AFASTAMENTOS E EMPRESA ---
     st.markdown("---")
@@ -81,10 +84,9 @@ try:
 
     with col_afast:
         st.subheader("🚨 Afastamentos Atuais")
-        # Lógica: Funcionários onde a coluna SITUACAO é 'Afastado' ou 'Afastada'
-        # Se você não tiver essa coluna, ajuste para o critério do seu Excel
-        qtd_afastados = df_a_filt[df_a_filt['SITUACAO'].str.contains('Afastado', na=False)].shape[0]
-        st.metric("Total de Afastados (Sem data retorno)", qtd_afastados)
+        # Conta afastados ignorando maiúsculas/minúsculas
+        qtd_afastados = df_a_filt[df_a_filt['SITUACAO'].str.contains('Afastado', case=False, na=False)].shape[0]
+        st.metric("Total de Afastados", qtd_afastados)
         st.caption("Filtro aplicado por Empresa na barra lateral.")
 
     with col_emp:
@@ -99,13 +101,16 @@ try:
     tab1, tab2 = st.tabs(["Visão Mensal (Ano Atual)", "Histórico Completo"])
     
     with tab1:
+        # Ordena por mês para o gráfico não ficar bagunçado
+        df_t_ano = df_t_ano.sort_values('Mês_Ano')
         fig_mensal = px.bar(df_t_ano, x='Mes_Nome', y='Turnover %', 
                            title=f"Taxa de Turnover Mensal em {ano_sel}",
-                           text_auto='.2f', color_discrete_sequence=['#ef553b'])
+                           text_auto='.2f')
+        fig_mensal.update_traces(marker_color='#ef553b')
         st.plotly_chart(fig_mensal, use_container_width=True)
 
     with tab2:
-        fig_hist = px.line(df_t, x='Mês_Ano', y=['Admissões', 'Desligamentos'], 
+        fig_hist = px.line(df_t.sort_values('Mês_Ano'), x='Mês_Ano', y=['Admissões', 'Desligamentos'], 
                           markers=True, title="Histórico de Entradas e Saídas")
         st.plotly_chart(fig_hist, use_container_width=True)
 
