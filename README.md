@@ -1,15 +1,26 @@
-# Projeto_RH
-Indicadores
-# RH Dashboard - Streamlit
+# 📊 Dashboard Estratégico de RH - Streamlit
 
-Dashboard interativo para análise de Turnover e Admitidos.
+Este projeto é um Dashboard interativo de Recursos Humanos desenvolvido em Python, utilizando a biblioteca **Streamlit**. Ele permite a análise em tempo real de indicadores críticos como Turnover, Admissões, Desligamentos e Afastamentos.
 
-## Como rodar localmente
-1. Instale as dependências: `pip install -r requirements.txt`
-2. Garanta que o arquivo `BI_RH.xlsx` está na raiz.
-3. Execute: `streamlit run app.py`
+## 🚀 Funcionalidades
+- **KPIs Dinâmicos**: Visualização instantânea de Colaboradores Ativos, Admissões, Desligamentos e Taxa de Turnover conforme o mês/ano selecionado.
+- **Análise de Turnover**: Gráficos de evolução mensal e anual para identificar tendências de rotatividade.
+- **Filtros Personalizados**: Filtragem por **Empresa**, **Ano** e **Mês** através da barra lateral.
+- **Controle de Afastamentos**: Monitoramento de colaboradores afastados sem data de retorno definida.
+- **Distribuição por Unidade**: Gráfico de pizza mostrando a proporção de colaboradores por empresa.
 
-## Deploy no Streamlit Cloud
-1. Suba os arquivos para o GitHub (exceto o .xlsx se for privado).
-2. No Streamlit Cloud, conecte seu repositório.
-3. Defina `app.py` como o Main file path.
+## 📂 Estrutura de Arquivos
+- `app.py`: Arquivo principal contendo a lógica de tratamento de dados e a interface do dashboard.
+- `requirements.txt`: Lista de dependências necessárias (Pandas, Streamlit, Plotly, Openpyxl).
+- `BI_RH.xlsx`: Base de dados em Excel (planilhas "Turn Over" e "Admitidos").
+
+## 🛠️ Requisitos para a Base de Dados (Excel)
+Para o correto funcionamento, o arquivo `BI_RH.xlsx` deve conter:
+1. **Aba "Turn Over"**: Colunas `Mês_Ano`, `Admissões`, `Desligamentos` e `Colaboradores`.
+2. **Aba "Admitidos"**: Colunas `EMPRESA`, `ADMISSAO`, `DTDEMISSAO` e `SITUACAO` (para identificar afastados).
+
+## 🔧 Como Rodar Localmente
+1. Clone o repositório.
+2. Instale as bibliotecas:
+   ```bash
+   pip install -r requirements.txt
