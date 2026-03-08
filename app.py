@@ -8,17 +8,22 @@ st.set_page_config(page_title="Dashboard RH Profissional", layout="wide")
 
 @st.cache_data
 def carregar_dados():
-    # Carregamento das abas
+    # Carregamento das 3 abas
     df_turnover = pd.read_excel("BI_RH.xlsx", sheet_name="Turn Over")
     df_admitidos = pd.read_excel("BI_RH.xlsx", sheet_name="Admitidos")
+    
+    try:
+        df_afastados_base = pd.read_excel("BI_RH.xlsx", sheet_name="afastado")
+    except:
+        # Caso a aba mude de nome acidentalmente para "Afastado" ou "Afastados"
+        df_afastados_base = pd.read_excel("BI_RH.xlsx", sheet_name=0) # Pega a primeira aba como fallback
 
     # --- LIMPEZA RADICAL DE COLUNAS ---
-    # Transforma tudo em minúsculo e tira espaços (Ex: "Tipo Afastamento " vira "tipo afastamento")
     df_turnover.columns = df_turnover.columns.str.strip().str.lower()
     df_admitidos.columns = df_admitidos.columns.str.strip().str.lower()
+    df_afastados_base.columns = df_afastados_base.columns.str.strip().str.lower()
 
     # --- Tratamento Turnover ---
-    # Nota: Agora as colunas devem ser chamadas em minúsculo no código
     df_turnover = df_turnover.dropna(subset=['mês_ano'])
     df_turnover['mês_ano'] = pd.to_datetime(df_turnover['mês_ano'])
     df_turnover['ano'] = df_turnover['mês_ano'].dt.year.astype(int)
@@ -27,46 +32,42 @@ def carregar_dados():
     for col in ['admissões', 'desligamentos', 'colaboradores']:
         df_turnover[col] = pd.to_numeric(df_turnover[col], errors='coerce').fillna(0)
 
-    # Cálculo Turnover Mensal
     df_turnover['turnover %'] = (((df_turnover['admissões'] + df_turnover['desligamentos']) / 2) / df_turnover['colaboradores']) * 100
 
-    # --- Tratamento Admitidos e Afastamentos ---
-    df_admitidos['empresa'] = df_admitidos['empresa'].astype(str).str.strip().replace('nan', 'Não Informado')
-    
-    # Lógica de Afastado (Usando nomes limpos em minúsculo)
-    # Verifica se a coluna existe antes de processar
-    if 'tipo afastamento' in df_admitidos.columns:
-        df_admitidos['esta_afastado'] = (
-            df_admitidos['tipo afastamento'].notnull() & 
-            (df_admitidos['tipo afastamento'].astype(str).str.len() > 2) &
-            (df_admitidos['data fim'].isnull())
-        )
+    # --- Tratamento Afastamentos (Aba "afastado") ---
+    # Lógica: Se 'data fim' está vazio, a pessoa continua afastada
+    if 'data fim' in df_afastados_base.columns:
+        df_afastados_base['esta_afastado'] = df_afastados_base['data fim'].isnull()
     else:
-        df_admitidos['esta_afastado'] = False
-        st.error(f"Coluna 'tipo afastamento' não encontrada. Colunas lidas: {list(df_admitidos.columns)}")
-        
-    return df_turnover, df_admitidos
+        # Se não achar a coluna 'data fim', considera todos da lista como afastados atuais
+        df_afastados_base['esta_afastado'] = True
+
+    return df_turnover, df_admitidos, df_afastados_base
 
 try:
-    df_t, df_a = carregar_dados()
+    df_t, df_a, df_af = carregar_dados()
     
     st.title("📊 Gestão de Indicadores RH")
 
     # --- SIDEBAR: FILTROS ---
     st.sidebar.header("Filtros de Visão")
     
-    lista_empresas = sorted([x for x in df_a['empresa'].unique() if x != 'Não Informado'])
+    # Filtro por Empresa (usando a base de admitidos)
+    lista_empresas = sorted([x for x in df_a['empresa'].unique() if str(x) != 'nan'])
     empresa_sel = st.sidebar.multiselect("Selecione a Empresa", options=lista_empresas, default=lista_empresas)
     
+    # Filtro por Ano
     lista_anos = sorted(df_t['ano'].unique(), reverse=True)
     ano_sel = st.sidebar.selectbox("Ano de Referência", options=lista_anos)
 
+    # Filtro por Mês
     df_meses_ano = df_t[df_t['ano'] == ano_sel]
     lista_meses = sorted(df_meses_ano['mes_nome'].unique())
     mes_sel = st.sidebar.selectbox("Mês de Referência", options=lista_meses)
 
     # --- FILTRAGEM DOS DADOS ---
     df_a_filt = df_a[df_a['empresa'].isin(empresa_sel)]
+    df_af_filt = df_af[df_af['empresa'].isin(empresa_sel)]
     df_t_periodo = df_t[(df_t['ano'] == ano_sel) & (df_t['mes_nome'] == mes_sel)]
     df_t_ano = df_t[df_t['ano'] == ano_sel].sort_values('mês_ano')
 
@@ -88,20 +89,22 @@ try:
 
     with col_afast:
         st.subheader("🚨 Afastamentos Atuais")
-        df_afastados_lista = df_a_filt[df_a_filt['esta_afastado'] == True]
-        qtd_afastados = df_afastados_lista.shape[0]
-        st.metric("Total Afastados (Ativos s/ Retorno)", qtd_afastados)
+        # Filtra apenas quem está marcado como afastado (data fim vazia)
+        df_ativos_afastados = df_af_filt[df_af_filt['esta_afastado'] == True]
+        qtd_afastados = df_ativos_afastados.shape[0]
+        st.metric("Total Afastados (Sem data retorno)", qtd_afastados)
         
         if qtd_afastados > 0:
             with st.expander("Ver detalhes dos afastados"):
-                # Ajustado para minúsculo
-                st.dataframe(df_afastados_lista[['nome', 'tipo afastamento', 'empresa']])
+                # Ajustando para os nomes de colunas que podem estar na aba afastado
+                colunas_mostrar = [c for c in ['nome funcionario', 'nome', 'tipo afastamento', 'empresa'] if c in df_ativos_afastados.columns]
+                st.dataframe(df_ativos_afastados[colunas_mostrar])
         else:
-            st.info("Nenhum colaborador afastado detectado (Data Fim vazia).")
+            st.info("Nenhum colaborador com afastamento em aberto encontrado.")
 
     with col_emp:
-        st.subheader("Colaboradores por Empresa")
-        fig_pie = px.pie(df_a_filt, names='empresa', hole=0.4)
+        st.subheader("Distribuição por Empresa (Ativos)")
+        fig_pie = px.pie(df_a_filt, names='empresa', hole=0.4, color_discrete_sequence=px.colors.qualitative.Pastel)
         st.plotly_chart(fig_pie, use_container_width=True)
 
     # --- LINHA 3: GRÁFICO DE EVOLUÇÃO ---
