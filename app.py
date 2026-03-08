@@ -24,22 +24,15 @@ def carregar_dados():
     df_turnover['Turnover %'] = (((df_turnover['Admissões'] + df_turnover['Desligamentos']) / 2) / df_turnover['Colaboradores']) * 100
 
     # --- Tratamento Admitidos e Afastamentos ---
-    # Limpeza de strings
     df_admitidos['EMPRESA'] = df_admitidos['EMPRESA'].astype(str).str.strip().replace('nan', 'Não Informado')
     
-    # Tratamento de Datas de Afastamento
-    # Convertendo 'data fim' para string para identificar o "00/00/0000"
-    df_admitidos['data fim'] = df_admitidos['data fim'].astype(str).str.strip()
-    
     # Lógica de Afastado: 
-    # 1. Tem algo escrito em 'tipo de afastamento' 
-    # 2. E a 'data fim' é "00/00/0000", ou "00/00/000", ou está vazia (NaN)
-    termos_vazios = ['00/00/0000', '00/00/000', '00/00/00', 'nan', 'None', '']
-    
+    # 1. 'tipo de afastamento' NÃO está vazio
+    # 2. 'data fim' ESTÁ vazio (isnull)
     df_admitidos['esta_afastado'] = (
         df_admitidos['tipo de afastamento'].notnull() & 
         (df_admitidos['tipo de afastamento'].astype(str).str.len() > 2) &
-        (df_admitidos['data fim'].isin(termos_vazios))
+        (df_admitidos['data fim'].isnull())
     )
         
     return df_turnover, df_admitidos
@@ -85,21 +78,20 @@ try:
 
     with col_afast:
         st.subheader("🚨 Afastamentos Atuais")
-        # Filtra quem está marcado como afastado na lógica da função carregar_dados
         df_afastados_lista = df_a_filt[df_a_filt['esta_afastado'] == True]
         qtd_afastados = df_afastados_lista.shape[0]
         
-        st.metric("Total Afastados (Sem data retorno)", qtd_afastados)
+        st.metric("Total Afastados (Ativos s/ Retorno)", qtd_afastados)
         
         if qtd_afastados > 0:
             with st.expander("Ver detalhes dos afastados"):
                 st.dataframe(df_afastados_lista[['NOME', 'tipo de afastamento', 'data inicio', 'EMPRESA']])
         else:
-            st.info("Nenhum colaborador afastado sem data de retorno.")
+            st.info("Nenhum colaborador com campo 'data fim' vazio e tipo preenchido.")
 
     with col_emp:
         st.subheader("Colaboradores por Empresa")
-        fig_pie = px.pie(df_a_filt, names='EMPRESA', hole=0.4)
+        fig_pie = px.pie(df_a_filt, names='EMPRESA', hole=0.4, color_discrete_sequence=px.colors.qualitative.Prism)
         st.plotly_chart(fig_pie, use_container_width=True)
 
     # --- LINHA 3: GRÁFICO DE EVOLUÇÃO (BARRAS + LINHA) ---
@@ -108,19 +100,19 @@ try:
 
     fig_evolucao = go.Figure()
 
-    # Admissões (Barras)
+    # Admissões (Barras Verdes)
     fig_evolucao.add_trace(go.Bar(
         x=df_t_ano['Mes_Nome'], y=df_t_ano['Admissões'],
         name='Admissões', marker_color='#2ecc71', offsetgroup=1
     ))
 
-    # Desligamentos (Barras)
+    # Desligamentos (Barras Vermelhas)
     fig_evolucao.add_trace(go.Bar(
         x=df_t_ano['Mes_Nome'], y=df_t_ano['Desligamentos'],
         name='Desligamentos', marker_color='#e74c3c', offsetgroup=1
     ))
 
-    # Total Colaboradores (Linha no Eixo Secundário)
+    # Efetivo Total (Linha Azul no Eixo Secundário)
     fig_evolucao.add_trace(go.Scatter(
         x=df_t_ano['Mes_Nome'], y=df_t_ano['Colaboradores'],
         name='Efetivo Total', mode='lines+markers+text',
@@ -132,13 +124,12 @@ try:
         xaxis=dict(title="Meses"),
         yaxis=dict(title="Movimentação (Adm/Desl)", showgrid=False),
         yaxis2=dict(title="Efetivo Total", overlaying='y', side='right', showgrid=True),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        legend=dict(orientation="h", yanchor="bottom", y=1.05, xanchor="right", x=1),
         barmode='group',
-        height=500
+        height=550
     )
 
     st.plotly_chart(fig_evolucao, use_container_width=True)
 
 except Exception as e:
-    st.error(f"Erro crítico: {e}")
-
+    st.error(f"Erro detectado: {e}")
