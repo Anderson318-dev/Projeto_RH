@@ -124,4 +124,23 @@ try:
     with col2:
         st.subheader("Distribuição por Empresa (Ativos)")
         fig_pie = px.pie(df_a_filt, names=col_emp, hole=0.4)
-        st.plotly_chart(fig_pie, use
+        st.plotly_chart(fig_pie, use_container_width=True)
+
+    # --- GRÁFICO DE EVOLUÇÃO ---
+    st.markdown("---")
+    st.subheader("📈 Evolução Mensal: Movimentação vs Efetivo")
+
+    fig_evolucao = go.Figure()
+    fig_evolucao.add_trace(go.Bar(x=df_t_ano['mes_nome'], y=df_t_ano['admissões'], name='Admissões', marker_color='#2ecc71'))
+    fig_evolucao.add_trace(go.Bar(x=df_t_ano['mes_nome'], y=df_t_ano['desligamentos'], name='Desligamentos', marker_color='#e74c3c'))
+    fig_evolucao.add_trace(go.Scatter(x=df_t_ano['mes_nome'], y=df_t_ano['colaboradores'], name='Efetivo Total', 
+                                     mode='lines+markers+text', text=df_t_ano['colaboradores'].astype(int), 
+                                     textposition="top center", line=dict(color='#3498db', width=4), yaxis='y2'))
+
+    fig_evolucao.update_layout(yaxis=dict(title="Movimentação"), yaxis2=dict(title="Efetivo Total", overlaying='y', side='right'),
+                              legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1), barmode='group')
+
+    st.plotly_chart(fig_evolucao, use_container_width=True)
+
+except Exception as e:
+    st.error(f"Erro: {e}")
