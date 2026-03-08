@@ -105,4 +105,24 @@ with col_graf1:
                          x='count', y='motivo', orientation='h', color_discrete_sequence=['#ef553b'])
         st.plotly_chart(fig_mot, use_container_width=True)
 
-with col_graf
+with col_graf2:
+    st.subheader("🏢 Afastados por Empresa")
+    if not df_af_mes.empty and 'empresa' in df_af_mes.columns:
+        fig_emp = px.pie(df_af_mes, names='empresa', hole=0.4)
+        st.plotly_chart(fig_emp, use_container_width=True)
+
+# Evolução
+st.markdown("---")
+st.subheader("📈 Evolução de Afastamentos no Ano")
+evolucao = []
+for m in df_meses['mês_ano']:
+    f_m = m + pd.offsets.MonthEnd(0)
+    qtd = len(df_af[(df_af['data_inicio'] <= f_m) & ((df_af['data_fim'].isnull()) | (df_af['data_fim'] >= m))])
+    evolucao.append(qtd)
+
+df_meses['qtd_afastados'] = evolucao
+fig_line = px.line(df_meses, x='mes_nome', y='qtd_afastados', markers=True, line_shape='spline')
+st.plotly_chart(fig_line, use_container_width=True)
+
+with st.expander("📋 Detalhes dos Afastados (Mês Selecionado)"):
+    st.write(df_af_mes)
