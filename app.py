@@ -1,9 +1,10 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
-st.set_page_config(page_title="Dashboard RH v2", layout="wide")
+st.set_page_config(page_title="Dashboard RH Profissional", layout="wide")
 
 @st.cache_data
 def carregar_dados():
@@ -12,9 +13,7 @@ def carregar_dados():
     df_admitidos = pd.read_excel("BI_RH.xlsx", sheet_name="Admitidos")
 
     # --- Tratamento Turnover ---
-    # Remove linhas onde a data está vazia para evitar o erro de comparação
     df_turnover = df_turnover.dropna(subset=['Mês_Ano'])
-    
     df_turnover['Mês_Ano'] = pd.to_datetime(df_turnover['Mês_Ano'])
     df_turnover['Ano'] = df_turnover['Mês_Ano'].dt.year.astype(int)
     df_turnover['Mes_Nome'] = df_turnover['Mês_Ano'].dt.strftime('%m - %b')
@@ -22,20 +21,26 @@ def carregar_dados():
     for col in ['Admissões', 'Desligamentos', 'Colaboradores']:
         df_turnover[col] = pd.to_numeric(df_turnover[col], errors='coerce').fillna(0)
 
-    # Cálculo Turnover Mensal
     df_turnover['Turnover %'] = (((df_turnover['Admissões'] + df_turnover['Desligamentos']) / 2) / df_turnover['Colaboradores']) * 100
 
-    # --- Tratamento Admitidos ---
-    df_admitidos['ADMISSAO'] = pd.to_datetime(df_admitidos['ADMISSAO'], errors='coerce')
-    df_admitidos['DTDEMISSAO'] = pd.to_datetime(df_admitidos['DTDEMISSAO'], errors='coerce')
+    # --- Tratamento Admitidos e Afastamentos ---
+    # Limpeza de strings
+    df_admitidos['EMPRESA'] = df_admitidos['EMPRESA'].astype(str).str.strip().replace('nan', 'Não Informado')
     
-    # Garante que EMPRESA e SITUACAO sejam sempre texto (evita erro de comparação float/str)
-    df_admitidos['EMPRESA'] = df_admitidos['EMPRESA'].astype(str).replace('nan', 'Não Informado')
+    # Tratamento de Datas de Afastamento
+    # Convertendo 'data fim' para string para identificar o "00/00/0000"
+    df_admitidos['data fim'] = df_admitidos['data fim'].astype(str).str.strip()
     
-    if 'SITUACAO' not in df_admitidos.columns:
-        df_admitidos['SITUACAO'] = 'Ativo'
-    else:
-        df_admitidos['SITUACAO'] = df_admitidos['SITUACAO'].astype(str).replace('nan', 'Ativo')
+    # Lógica de Afastado: 
+    # 1. Tem algo escrito em 'tipo de afastamento' 
+    # 2. E a 'data fim' é "00/00/0000", ou "00/00/000", ou está vazia (NaN)
+    termos_vazios = ['00/00/0000', '00/00/000', '00/00/00', 'nan', 'None', '']
+    
+    df_admitidos['esta_afastado'] = (
+        df_admitidos['tipo de afastamento'].notnull() & 
+        (df_admitidos['tipo de afastamento'].astype(str).str.len() > 2) &
+        (df_admitidos['data fim'].isin(termos_vazios))
+    )
         
     return df_turnover, df_admitidos
 
@@ -47,15 +52,12 @@ try:
     # --- SIDEBAR: FILTROS ---
     st.sidebar.header("Filtros de Visão")
     
-    # Filtro por Empresa (Garante que a lista é ordenada corretamente)
     lista_empresas = sorted([x for x in df_a['EMPRESA'].unique() if x != 'Não Informado'])
     empresa_sel = st.sidebar.multiselect("Selecione a Empresa", options=lista_empresas, default=lista_empresas)
     
-    # Filtro por Ano
     lista_anos = sorted(df_t['Ano'].unique(), reverse=True)
     ano_sel = st.sidebar.selectbox("Ano de Referência", options=lista_anos)
 
-    # Filtro por Mês (Filtrado pelo Ano escolhido)
     df_meses_ano = df_t[df_t['Ano'] == ano_sel]
     lista_meses = sorted(df_meses_ano['Mes_Nome'].unique())
     mes_sel = st.sidebar.selectbox("Mês de Referência", options=lista_meses)
@@ -63,56 +65,79 @@ try:
     # --- FILTRAGEM DOS DADOS ---
     df_a_filt = df_a[df_a['EMPRESA'].isin(empresa_sel)]
     df_t_periodo = df_t[(df_t['Ano'] == ano_sel) & (df_t['Mes_Nome'] == mes_sel)]
-    df_t_ano = df_t[df_t['Ano'] == ano_sel]
+    df_t_ano = df_t[df_t['Ano'] == ano_sel].sort_values('Mês_Ano')
 
     # --- MÉTRICAS (KPIs) ---
-    st.subheader(f"Resultados de {mes_sel}/{ano_sel}")
+    st.subheader(f"📍 Indicadores: {mes_sel}/{ano_sel}")
     c1, c2, c3, c4 = st.columns(4)
     
     if not df_t_periodo.empty:
         linha = df_t_periodo.iloc[0]
-        c1.metric("Colaboradores", int(linha['Colaboradores']))
-        c2.metric("Admissões", int(linha['Admissões']))
-        c3.metric("Desligamentos", int(linha['Desligamentos']))
-        c4.metric("Turnover Mensal", f"{linha['Turnover %']:.2f}%")
-    else:
-        st.warning("Sem dados para o período selecionado.")
+        c1.metric("Colaboradores Ativos", int(linha['Colaboradores']))
+        c2.metric("Admissões no Mês", int(linha['Admissões']))
+        c3.metric("Desligamentos no Mês", int(linha['Desligamentos']))
+        c4.metric("Taxa de Turnover", f"{linha['Turnover %']:.2f}%")
 
-    # --- LINHA 2: AFASTAMENTOS E EMPRESA ---
     st.markdown("---")
+
+    # --- LINHA 2: AFASTAMENTOS E PIZZA ---
     col_afast, col_emp = st.columns(2)
 
     with col_afast:
         st.subheader("🚨 Afastamentos Atuais")
-        # Conta afastados ignorando maiúsculas/minúsculas
-        qtd_afastados = df_a_filt[df_a_filt['SITUACAO'].str.contains('Afastado', case=False, na=False)].shape[0]
-        st.metric("Total de Afastados", qtd_afastados)
-        st.caption("Filtro aplicado por Empresa na barra lateral.")
+        # Filtra quem está marcado como afastado na lógica da função carregar_dados
+        df_afastados_lista = df_a_filt[df_a_filt['esta_afastado'] == True]
+        qtd_afastados = df_afastados_lista.shape[0]
+        
+        st.metric("Total Afastados (Sem data retorno)", qtd_afastados)
+        
+        if qtd_afastados > 0:
+            with st.expander("Ver detalhes dos afastados"):
+                st.dataframe(df_afastados_lista[['NOME', 'tipo de afastamento', 'data inicio', 'EMPRESA']])
+        else:
+            st.info("Nenhum colaborador afastado sem data de retorno.")
 
     with col_emp:
-        st.subheader("Distribuição por Empresa")
+        st.subheader("Colaboradores por Empresa")
         fig_pie = px.pie(df_a_filt, names='EMPRESA', hole=0.4)
         st.plotly_chart(fig_pie, use_container_width=True)
 
-    # --- LINHA 3: GRÁFICOS DE TURNOVER ---
+    # --- LINHA 3: GRÁFICO DE EVOLUÇÃO (BARRAS + LINHA) ---
     st.markdown("---")
-    st.subheader("Evolução do Turnover e Movimentação")
-    
-    tab1, tab2 = st.tabs(["Visão Mensal (Ano Atual)", "Histórico Completo"])
-    
-    with tab1:
-        # Ordena por mês para o gráfico não ficar bagunçado
-        df_t_ano = df_t_ano.sort_values('Mês_Ano')
-        fig_mensal = px.bar(df_t_ano, x='Mes_Nome', y='Turnover %', 
-                           title=f"Taxa de Turnover Mensal em {ano_sel}",
-                           text_auto='.2f')
-        fig_mensal.update_traces(marker_color='#ef553b')
-        st.plotly_chart(fig_mensal, use_container_width=True)
+    st.subheader("📈 Evolução Mensal: Movimentação vs Efetivo")
 
-    with tab2:
-        fig_hist = px.line(df_t.sort_values('Mês_Ano'), x='Mês_Ano', y=['Admissões', 'Desligamentos'], 
-                          markers=True, title="Histórico de Entradas e Saídas")
-        st.plotly_chart(fig_hist, use_container_width=True)
+    fig_evolucao = go.Figure()
+
+    # Admissões (Barras)
+    fig_evolucao.add_trace(go.Bar(
+        x=df_t_ano['Mes_Nome'], y=df_t_ano['Admissões'],
+        name='Admissões', marker_color='#2ecc71', offsetgroup=1
+    ))
+
+    # Desligamentos (Barras)
+    fig_evolucao.add_trace(go.Bar(
+        x=df_t_ano['Mes_Nome'], y=df_t_ano['Desligamentos'],
+        name='Desligamentos', marker_color='#e74c3c', offsetgroup=1
+    ))
+
+    # Total Colaboradores (Linha no Eixo Secundário)
+    fig_evolucao.add_trace(go.Scatter(
+        x=df_t_ano['Mes_Nome'], y=df_t_ano['Colaboradores'],
+        name='Efetivo Total', mode='lines+markers+text',
+        text=df_t_ano['Colaboradores'].astype(int), textposition="top center",
+        line=dict(color='#3498db', width=4), yaxis='y2'
+    ))
+
+    fig_evolucao.update_layout(
+        xaxis=dict(title="Meses"),
+        yaxis=dict(title="Movimentação (Adm/Desl)", showgrid=False),
+        yaxis2=dict(title="Efetivo Total", overlaying='y', side='right', showgrid=True),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        barmode='group',
+        height=500
+    )
+
+    st.plotly_chart(fig_evolucao, use_container_width=True)
 
 except Exception as e:
-    st.error(f"Erro ao processar dados: {e}")
+    st.error(f"Erro crítico: {e}")
