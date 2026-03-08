@@ -29,9 +29,9 @@ def carregar_dados():
     # Lógica de Afastado: 
     # 1. 'tipo de afastamento' NÃO está vazio
     # 2. 'data fim' ESTÁ vazio (isnull)
-    df_admitidos['esta_afastado'] = (
-        df_admitidos['tipo de afastamento'].notnull() & 
-        (df_admitidos['tipo de afastamento'].astype(str).str.len() > 2) &
+df_admitidos['esta_afastado'] = (
+        df_admitidos['tipo afastamento'].notnull() & 
+        (df_admitidos['tipo afastamento'].astype(str).str.len() > 2) &
         (df_admitidos['data fim'].isnull())
     )
         
@@ -133,3 +133,4 @@ try:
 
 except Exception as e:
     st.error(f"Erro detectado: {e}")
+
