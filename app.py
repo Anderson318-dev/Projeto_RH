@@ -12,7 +12,7 @@ def carregar_dados():
     try:
         df_turnover = pd.read_excel("BI_RH.xlsx", sheet_name="Turn Over")
         df_admitidos = pd.read_excel("BI_RH.xlsx", sheet_name="Admitidos")
-        df_afastado = pd.read_excel("BI_RH.xlsx", sheet_name="afastado")
+        df_afastados_base = pd.read_excel("BI_RH.xlsx", sheet_name="afastado")
     except Exception as e:
         st.error(f"Erro ao ler abas do Excel: {e}. Verifique se os nomes das abas estão corretos.")
         st.stop()
@@ -20,7 +20,7 @@ def carregar_dados():
     # --- LIMPEZA DE COLUNAS ---
     df_turnover.columns = df_turnover.columns.str.strip().str.lower()
     df_admitidos.columns = df_admitidos.columns.str.strip().str.lower()
-    df_afastado.columns = df_afastado.columns.str.strip().str.lower()
+    df_afastados_base.columns = df_afastados_base.columns.str.strip().str.lower()
 
     # --- Tratamento Turnover ---
     df_turnover = df_turnover.dropna(subset=['mês_ano'])
@@ -125,4 +125,3 @@ try:
 
 except Exception as e:
     st.error(f"Erro ao processar dados: {e}")
-
