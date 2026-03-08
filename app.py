@@ -12,7 +12,7 @@ def carregar_dados():
     df_turnover = pd.read_excel("BI_RH.xlsx", sheet_name="Turn Over")
     df_admitidos = pd.read_excel("BI_RH.xlsx", sheet_name="Admitidos")
 
-    # Limpeza de nomes de colunas (remove espaços extras)
+    # Limpeza de nomes de colunas
     df_turnover.columns = df_turnover.columns.str.strip()
     df_admitidos.columns = df_admitidos.columns.str.strip()
 
@@ -32,7 +32,6 @@ def carregar_dados():
     df_admitidos['EMPRESA'] = df_admitidos['EMPRESA'].astype(str).str.strip().replace('nan', 'Não Informado')
     
     # Lógica de Afastado (Coluna: 'tipo afastamento')
-    # Considera afastado se o tipo está preenchido e a data fim está vazia (null)
     df_admitidos['esta_afastado'] = (
         df_admitidos['tipo afastamento'].notnull() & 
         (df_admitidos['tipo afastamento'].astype(str).str.len() > 2) &
@@ -86,33 +85,53 @@ try:
         st.subheader("🚨 Afastamentos Atuais")
         df_afastados_lista = df_a_filt[df_a_filt['esta_afastado'] == True]
         qtd_afastados = df_afastados_lista.shape[0]
-        
         st.metric("Total Afastados (Ativos s/ Retorno)", qtd_afastados)
         
         if qtd_afastados > 0:
             with st.expander("Ver detalhes dos afastados"):
-                st.dataframe(df_afastados_lista[['NOME', 'tipo afastamento', 'data inicio', 'EMPRESA']])
+                st.dataframe(df_afastados_lista[['NOME', 'tipo afastamento', 'EMPRESA']])
         else:
-            st.info("Nenhum colaborador com campo 'data fim' vazio detectado.")
+            st.info("Nenhum colaborador afastado detectado.")
 
     with col_emp:
         st.subheader("Colaboradores por Empresa")
-        fig_pie = px.pie(df_a_filt, names='EMPRESA', hole=0.4, color_discrete_sequence=px.colors.qualitative.Safe)
+        fig_pie = px.pie(df_a_filt, names='EMPRESA', hole=0.4)
         st.plotly_chart(fig_pie, use_container_width=True)
 
-    # --- LINHA 3: GRÁFICO DE EVOLUÇÃO (BARRAS + LINHA) ---
+    # --- LINHA 3: GRÁFICO DE EVOLUÇÃO ---
     st.markdown("---")
     st.subheader("📈 Evolução Mensal: Movimentação vs Efetivo")
 
     fig_evolucao = go.Figure()
 
-    # Admissões (Barras)
+    # Admissões
     fig_evolucao.add_trace(go.Bar(
         x=df_t_ano['Mes_Nome'], y=df_t_ano['Admissões'],
-        name='Admissões', marker_color='#2ecc71', offsetgroup=1
+        name='Admissões', marker_color='#2ecc71'
     ))
 
-    # Desligamentos (Barras)
+    # Desligamentos
     fig_evolucao.add_trace(go.Bar(
         x=df_t_ano['Mes_Nome'], y=df_t_ano['Desligamentos'],
-        name='Desligamentos', marker_color='#e74c3c', offsetgroup=1
+        name='Desligamentos', marker_color='#e74c3c'
+    ))
+
+    # Efetivo Total (Linha)
+    fig_evolucao.add_trace(go.Scatter(
+        x=df_t_ano['Mes_Nome'], y=df_t_ano['Colaboradores'],
+        name='Efetivo Total', mode='lines+markers+text',
+        text=df_t_ano['Colaboradores'].astype(int), textposition="top center",
+        line=dict(color='#3498db', width=4), yaxis='y2'
+    ))
+
+    fig_evolucao.update_layout(
+        yaxis=dict(title="Movimentação"),
+        yaxis2=dict(title="Efetivo Total", overlaying='y', side='right'),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        barmode='group'
+    )
+
+    st.plotly_chart(fig_evolucao, use_container_width=True)
+
+except Exception as e:
+    st.error(f"Erro detectado: {e}")
