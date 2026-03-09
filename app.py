@@ -28,20 +28,16 @@ def carregar_dados():
 
         # --- MAPEAMENTO CORRIGIDO (AFASTADOS) ---
         cols_af = df_af_raw.columns
-        # Procura "data inicio"
         c_ini = next((c for c in cols_af if 'inicio' in c or 'início' in c or 'dt_ini' in c), None)
-        # CORREÇÃO: Procura "data termino" ou "fim"
-        c_fim = next((c for c in cols_af if 'término' in c or 'término' in c or 'fim' in c), None)
+        c_fim = next((c for c in cols_af if 'término' in c or 'termino' in c or 'fim' in c), None)
         c_mot = next((c for c in cols_af if 'tipo' in c or 'motivo' in c), None)
         c_emp = next((c for c in cols_af if 'empresa' in c or 'unidade' in c), None)
 
-        # Fallbacks de segurança
         if not c_ini: df_af_raw['data_inicio_temp'] = pd.NaT; c_ini = 'data_inicio_temp'
         if not c_fim: df_af_raw['data_término_temp'] = pd.NaT; c_fim = 'data_fim_temp'
         if not c_mot: df_af_raw['motivo_temp'] = "Não Informado"; c_mot = 'motivo_temp'
         if not c_emp: df_af_raw['empresa_temp'] = "Geral"; c_emp = 'empresa_temp'
 
-        # Converter para Data
         df_af_raw[c_ini] = pd.to_datetime(df_af_raw[c_ini], errors='coerce')
         df_af_raw[c_fim] = pd.to_datetime(df_af_raw[c_fim], errors='coerce')
 
@@ -81,11 +77,19 @@ mes_sel = st.sidebar.selectbox("Mês", df_meses_ano['mes_nome'].unique())
 data_ref = df_meses_ano[df_meses_ano['mes_nome'] == mes_sel]['mês_ano'].iloc[0]
 fim_mes_ref = data_ref + pd.offsets.MonthEnd(0)
 
-df_t_ano = df_t[df_t['ano'] == ano_sel].sort_values('mês_ano')
+# Filtragem Turnover e Cálculo da Taxa
+df_t_ano = df_t[df_t['ano'] == ano_sel].copy().sort_values('mês_ano')
+
+# Cálculo Turnover: ((Adm + Des) / 2) / Efetivo * 100
+df_t_ano['turnover_taxa'] = (
+    ((df_t_ano['admissões'] + df_t_ano['desligamentos']) / 2) / 
+    df_t_ano['colaboradores'].replace(0, 1) # Evita divisão por zero
+) * 100
+
 df_t_periodo = df_t_ano[df_t_ano['mes_nome'] == mes_sel]
 df_a_filt = df_a[df_a[col_emp_adm].isin(empresa_sel)]
 
-# Filtragem Afastados (Lógica Temporal)
+# Filtragem Afastados
 mask = (df_af[c_ini] <= fim_mes_ref) & (
     (df_af[c_fim].isnull()) | (df_af[c_fim] >= data_ref)
 )
@@ -97,46 +101,48 @@ if c_emp_af in df_af_mes.columns:
 st.title(f"📊 Dashboard RH - {mes_sel}/{ano_sel}")
 
 # KPIs
-c1, c2, c3, c4 = st.columns(4)
+c1, c2, c3, c4, c5 = st.columns(5)
 if not df_t_periodo.empty:
     linha = df_t_periodo.iloc[0]
     c1.metric("Efetivo Total", int(linha['colaboradores']))
     c2.metric("Admissões", int(linha['admissões']))
     c3.metric("Desligamentos", int(linha['desligamentos']))
-c4.metric("Afastados no Mês", len(df_af_mes))
+    c4.metric("Afastados no Mês", len(df_af_mes))
+    c5.metric("Taxa Turnover", f"{linha['turnover_taxa']:.2f}%")
 
 st.markdown("---")
 
 # --- GRÁFICO DE EVOLUÇÃO ---
-st.subheader("📈 Movimentação Mensal vs Efetivo")
+st.subheader("📈 Movimentação Mensal vs Turnover")
 fig_evol = go.Figure()
 
-# Admissões com Rótulo
+# Admissões
 fig_evol.add_trace(go.Bar(
     x=df_t_ano['mes_nome'], y=df_t_ano['admissões'],
-    name='Admissões', marker_color='#2ecc71',
-    text=df_t_ano['admissões'].astype(int), textposition='outside'
+    name='Admissões', marker_color='#2ecc71'
 ))
 
-# Desligamentos com Rótulo
+# Desligamentos
 fig_evol.add_trace(go.Bar(
     x=df_t_ano['mes_nome'], y=df_t_ano['desligamentos'],
-    name='Desligamentos', marker_color='#e74c3c',
-    text=df_t_ano['desligamentos'].astype(int), textposition='outside'
+    name='Desligamentos', marker_color='#e74c3c'
 ))
 
-# Linha de Efetivo
+# Linha de Turnover (%)
 fig_evol.add_trace(go.Scatter(
-    x=df_t_ano['mes_nome'], y=df_t_ano['colaboradores'],
-    name='Efetivo Total', mode='lines+markers+text',
-    text=df_t_ano['colaboradores'].astype(int), textposition="top center",
-    line=dict(color='#3498db', width=4), yaxis='y2'
+    x=df_t_ano['mes_nome'], y=df_t_ano['turnover_taxa'],
+    name='Taxa Turnover (%)', mode='lines+markers+text',
+    text=df_t_ano['turnover_taxa'].apply(lambda x: f"{x:.1f}%"),
+    textposition="top center",
+    line=dict(color='#f39c12', width=3, dash='dot'), 
+    yaxis='y2'
 ))
 
 fig_evol.update_layout(
-    yaxis=dict(title="Movimentação", showgrid=False),
-    yaxis2=dict(title="Efetivo Total", overlaying='y', side='right', showgrid=True),
-    barmode='group', legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+    yaxis=dict(title="Quantidade (Adm/Des)", showgrid=False),
+    yaxis2=dict(title="Taxa de Turnover (%)", overlaying='y', side='right', showgrid=True),
+    barmode='group', 
+    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
 )
 st.plotly_chart(fig_evol, use_container_width=True)
 
