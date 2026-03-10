@@ -12,6 +12,7 @@ def carregar_dados(file):
         xls = pd.ExcelFile(file)
         lista_abas = xls.sheet_names
         
+        # Localização de abas
         aba_t = next((s for s in lista_abas if 'turn' in s.lower()), None)
         aba_a = next((s for s in lista_abas if 'admit' in s.lower()), None)
         aba_af = next((s for s in lista_abas if 'afast' in s.lower()), None)
@@ -20,6 +21,7 @@ def carregar_dados(file):
         df_admitidos = pd.read_excel(xls, sheet_name=aba_a)
         df_af_raw = pd.read_excel(xls, sheet_name=aba_af) if aba_af else pd.DataFrame()
 
+        # Padronização de colunas
         for df in [df_turnover, df_admitidos, df_af_raw]:
             df.columns = df.columns.str.strip().str.lower()
 
@@ -29,7 +31,7 @@ def carregar_dados(file):
         c_fim = next((c for c in cols_af if 'término' in c or 'termino' in c or 'fim' in c), None)
         c_mot = next((c for c in cols_af if 'tipo' in c or 'motivo' in c), None)
 
-        # Tratamento de Datas e Números
+        # Datas e Números
         col_mes_t = next((c for c in df_turnover.columns if 'mês' in c or 'mes' in c), None)
         df_turnover['mês_ano'] = pd.to_datetime(df_turnover[col_mes_t], errors='coerce')
         df_turnover = df_turnover.dropna(subset=['mês_ano'])
@@ -45,7 +47,7 @@ def carregar_dados(file):
         df_turnover['turnover_taxa'] = (((df_turnover['admissões'] + df_turnover['desligamentos']) / 2) / 
                                         df_turnover['colaboradores'].replace(0, 1)) * 100
         
-        # Retenção: Desligamentos / Colaboradores (conforme solicitado)
+        # Retenção: Desligamentos / Colaboradores
         df_turnover['retencao_taxa'] = (df_turnover['desligamentos'] / 
                                         df_turnover['colaboradores'].replace(0, 1)) * 100
 
@@ -57,14 +59,6 @@ def carregar_dados(file):
 # --- 2. BARRA LATERAL ---
 st.sidebar.header("📁 Importação")
 arquivo_subido = st.sidebar.file_uploader("Selecione o BI_RH.xlsx", type=["xlsx"])
-
-# LEGENDA DOS ÍCONES (Sinalizadores de Tendência)
-with st.sidebar.expander("💡 Entenda os Ícones (Deltas)"):
-    st.write("As setas comparam o mês atual com o mês anterior:")
-    st.write("🔼 **Seta para cima**: O valor aumentou.")
-    st.write("🔽 **Seta para baixo**: O valor diminuiu.")
-    st.write("🟢 **Verde**: Indica melhora (ex: mais admitidos ou menos turnover).")
-    st.write("🔴 **Vermelho**: Indica atenção (ex: mais desligamentos).")
 
 if arquivo_subido:
     dados = carregar_dados(arquivo_subido)
@@ -82,44 +76,58 @@ if arquivo_subido:
         df_ant_list = df_t[df_t['mês_ano'] == data_ant]
         df_ant = df_ant_list.iloc[0] if not df_ant_list.empty else None
 
-        # --- 3. KPIs ---
+        # --- 3. TÍTULO E KPIs (5 COLUNAS) ---
         st.title(f"📊 Gestão de RH - {mes_sel}/{ano_sel}")
+        
         def calc_delta(val, col): return (val - df_ant[col]) if df_ant is not None else 0
+        
+        # Texto de ajuda padrão para as métricas
+        msg_ajuda = "A seta indica a variação em relação ao mês anterior. Verde indica melhora e Vermelho indica atenção."
 
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Efetivo", int(df_atual['colaboradores']), delta=int(calc_delta(df_atual['colaboradores'], 'colaboradores')))
-        c2.metric("Admissões", int(df_atual['admissões']), delta=int(calc_delta(df_atual['admissões'], 'admissões')))
-        c3.metric("Desligamentos", int(df_atual['desligamentos']), delta=int(calc_delta(df_atual['desligamentos'], 'desligamentos')), delta_color="inverse")
-        c4.metric("Taxa Turnover", f"{df_atual['turnover_taxa']:.2f}%", delta=f"{calc_delta(df_atual['turnover_taxa'], 'turnover_taxa'):.2f}%", delta_color="inverse")
+        c1, c2, c3, c4, c5 = st.columns(5)
+        
+        c1.metric("Efetivo", int(df_atual['colaboradores']), 
+                  delta=int(calc_delta(df_atual['colaboradores'], 'colaboradores')), help=msg_ajuda)
+        
+        c2.metric("Admissões", int(df_atual['admissões']), 
+                  delta=int(calc_delta(df_atual['admissões'], 'admissões')), help=msg_ajuda)
+        
+        c3.metric("Desligamentos", int(df_atual['desligamentos']), 
+                  delta=int(calc_delta(df_atual['desligamentos'], 'desligamentos')), 
+                  delta_color="inverse", help=msg_ajuda)
+        
+        c4.metric("Taxa Turnover", f"{df_atual['turnover_taxa']:.2f}%", 
+                  delta=f"{calc_delta(df_atual['turnover_taxa'], 'turnover_taxa'):.2f}%", 
+                  delta_color="inverse", help=msg_ajuda)
+        
+        # NOVA MÉTRICA DE RETENÇÃO (C/D)
+        c5.metric("Taxa Retenção", f"{df_atual['retencao_taxa']:.2f}%", 
+                  delta=f"{calc_delta(df_atual['retencao_taxa'], 'retencao_taxa'):.2f}%", 
+                  delta_color="inverse", help=msg_ajuda)
 
         st.markdown("---")
 
-        # --- 4. GRÁFICO DE TENDÊNCIA COM RETENÇÃO ---
-        st.subheader("📈 Evolução Mensal e Taxas de Retenção")
+        # --- 4. GRÁFICO DE TENDÊNCIA (LIMPO) ---
+        st.subheader("📈 Evolução da Movimentação Mensal")
         df_ano = df_t[df_t['ano'] == ano_sel].sort_values('mês_ano')
         
         fig = go.Figure()
-        # Barras de Movimentação
         fig.add_trace(go.Bar(x=df_ano['mes_nome'], y=df_ano['admissões'], name='Admissões', 
                              marker_color='#2ecc71', text=df_ano['admissões'], textposition='outside'))
+        
         fig.add_trace(go.Bar(x=df_ano['mes_nome'], y=df_ano['desligamentos'], name='Desligamentos', 
                              marker_color='#e74c3c', text=df_ano['desligamentos'], textposition='outside'))
         
-        # Linha de Turnover (Eixo secundário)
-        fig.add_trace(go.Scatter(x=df_ano['mes_nome'], y=df_ano['turnover_taxa'], name='Taxa Turnover (%)', 
-                                 yaxis='y2', line=dict(color='#f1c40f', width=3), mode='lines+markers+text',
-                                 text=df_ano['turnover_taxa'].round(1), textposition='top center'))
-        
-        # Linha de Retenção (Eixo secundário - conforme solicitado)
-        fig.add_trace(go.Scatter(x=df_ano['mes_nome'], y=df_ano['retencao_taxa'], name='Taxa Retenção (%)', 
-                                 yaxis='y2', line=dict(color='#9b59b6', width=3, dash='dot'), mode='lines+markers+text',
-                                 text=df_ano['retencao_taxa'].round(1), textposition='bottom center'))
+        # Linha de Efetivo Total
+        fig.add_trace(go.Scatter(x=df_ano['mes_nome'], y=df_ano['colaboradores'], name='Efetivo Total', 
+                                 yaxis='y2', line=dict(color='#3498db', width=4), mode='lines+markers+text',
+                                 text=df_ano['colaboradores'].astype(int), textposition='top center'))
 
         fig.update_layout(
-            yaxis=dict(title="Volume de Pessoas"),
-            yaxis2=dict(title="Taxas (%)", overlaying='y', side='right', range=[0, max(df_ano['turnover_taxa'].max(), df_ano['retencao_taxa'].max()) + 5]),
+            yaxis=dict(title="Volume de Movimentação"),
+            yaxis2=dict(title="Efetivo Total", overlaying='y', side='right'),
             barmode='group',
-            legend=dict(orientation="h", y=1.15, x=0.5, xanchor="center")
+            legend=dict(orientation="h", y=1.1, x=0.5, xanchor="center")
         )
         st.plotly_chart(fig, use_container_width=True)
 
@@ -133,8 +141,8 @@ if arquivo_subido:
 
         with col_af1:
             st.subheader("📋 Absenteísmo")
-            st.metric("Total de Afastados", len(df_af_mes))
-            st.info("Soma de todos os colaboradores com afastamento ativo no mês selecionado.")
+            st.metric("Total de Afastados no Mês", len(df_af_mes))
+            st.info("Contagem de colaboradores com afastamento ativo no período selecionado.")
 
         with col_af2:
             if not df_af_mes.empty:
