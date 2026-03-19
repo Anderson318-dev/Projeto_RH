@@ -84,7 +84,7 @@ if arquivo_subido:
         row_ant = row_ant_list.iloc[0] if not row_ant_list.empty else None
 
         # --- 4. KPIs (5 COLUNAS NO TOPO) ---
-        st.title(f"📊 INDICADDORES RH - {mes_sel}/{ano_sel}")
+        st.title(f"📊 INDICADORES RH - {mes_sel}/{ano_sel}")
         
         # Função para calcular o delta (variação)
         def calc_delta(val_atual, col):
