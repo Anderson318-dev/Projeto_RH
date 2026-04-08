@@ -209,37 +209,65 @@ if arquivo_subido:
 
             # Aplica filtro de empresa → gera bases filtradas
             if emp_sel != 'Todas' and c_emp:
-                df_af_mes    = df_af_geral[df_af_geral[c_emp] == emp_sel].copy()
                 df_sem_prev_f = df_sem_prev[df_sem_prev[c_emp] == emp_sel].copy()
                 df_retorno_f  = df_retorno[df_retorno[c_emp] == emp_sel].copy()
                 df_iniciados  = df_iniciados_geral[df_iniciados_geral[c_emp] == emp_sel].copy()
             else:
-                df_af_mes     = df_af_geral.copy()
                 df_sem_prev_f = df_sem_prev.copy()
                 df_retorno_f  = df_retorno.copy()
                 df_iniciados  = df_iniciados_geral.copy()
 
+            # df_af_mes = união dos 3 grupos filtrados (base única para motivos e listas)
+            df_af_mes = pd.concat([df_sem_prev_f, df_retorno_f, df_iniciados]).drop_duplicates()
+
             st.markdown("---")
 
-            # ─── KPIs (obedecem o filtro) ─────────────────────────────────────
-            # Total = Sem previsão + Retorno previsto + Iniciaram no mês (união sem duplicatas)
+            # ─── DELTA MÊS ANTERIOR (mesma lógica aplicada ao período anterior) ──
+            data_ant     = data_ini_mes - pd.DateOffset(months=1)
+            ini_ant      = data_ant.replace(day=1)
+            fim_ant      = data_ant + pd.offsets.MonthEnd(0)
+
+            base_ant = df_af if not (emp_sel != 'Todas' and c_emp) else df_af[df_af[c_emp] == emp_sel]
+
+            tot_ant    = len(pd.concat([
+                base_ant[base_ant[c_ini].notna() & base_ant[c_fim].isna()],
+                base_ant[base_ant[c_ini].notna() & base_ant[c_fim].notna() & (base_ant[c_fim] > hoje)],
+                base_ant[base_ant[c_ini].notna() & (base_ant[c_ini] >= ini_ant) & (base_ant[c_ini] <= fim_ant)]
+            ]).drop_duplicates())
+
+            ini_ant_cnt = len(base_ant[
+                base_ant[c_ini].notna() &
+                (base_ant[c_ini] >= ini_ant) & (base_ant[c_ini] <= fim_ant)
+            ])
+            sem_ant_cnt = len(base_ant[base_ant[c_ini].notna() & base_ant[c_fim].isna()])
+            ret_ant_cnt = len(base_ant[base_ant[c_ini].notna() & base_ant[c_fim].notna() & (base_ant[c_fim] > hoje)])
+
+            # ─── KPIs NA ORDEM SOLICITADA + DELTA ────────────────────────────
             total_af = len(
                 pd.concat([df_sem_prev_f, df_retorno_f, df_iniciados])
                 .drop_duplicates()
             )
             k1, k2, k3, k4 = st.columns(4)
-            k1.metric("Total Afastados",         total_af,
-                      help="União de: Sem previsão de retorno + Retorno previsto + Iniciaram no mês.")
-            k2.metric("Sem Previsão de Retorno",  len(df_sem_prev_f),
-                      help="Afastados com c_fim nulo, vazio ou 00/00/0000.")
-            k3.metric("Retorno Previsto",          len(df_retorno_f),
-                      help="Afastados com data de término preenchida e maior que hoje.")
-            k4.metric("Iniciaram no Mês",          len(df_iniciados),
+            k1.metric("Total Afastados",        total_af,
+                      delta=int(total_af - tot_ant),
+                      delta_color="inverse",
+                      help="União de: Iniciaram no mês + Sem previsão + Retorno previsto.")
+            k2.metric("Iniciaram no Mês",        len(df_iniciados),
+                      delta=int(len(df_iniciados) - ini_ant_cnt),
+                      delta_color="inverse",
                       help="Afastamentos com início dentro do mês selecionado.")
+            k3.metric("Sem Previsão de Retorno", len(df_sem_prev_f),
+                      delta=int(len(df_sem_prev_f) - sem_ant_cnt),
+                      delta_color="inverse",
+                      help="Afastados com data de término nula, vazia ou 00/00/0000.")
+            k4.metric("Retorno Previsto",         len(df_retorno_f),
+                      delta=int(len(df_retorno_f) - ret_ant_cnt),
+                      delta_color="inverse",
+                      help="Afastados com data de término preenchida e maior que hoje.")
 
             st.markdown("---")
 
-            # ─── GRÁFICO BARRAS POR EMPRESA (sempre base geral, destaca seleção) ──
+            # ─── GRÁFICO BARRAS POR EMPRESA (base geral, destaca seleção) ────
             if c_emp:
                 resumo_emp = (
                     df_af_geral.groupby(c_emp)
@@ -248,30 +276,27 @@ if arquivo_subido:
                     .rename(columns={c_emp: 'Empresa'})
                     .sort_values('Afastados', ascending=True)
                 )
-                # Destaca empresa selecionada com cor diferente
                 resumo_emp['cor'] = resumo_emp['Empresa'].apply(
                     lambda e: '#e74c3c' if (emp_sel != 'Todas' and e == emp_sel) else '#3498db'
                 )
                 st.subheader("🏢 Afastados por Empresa")
                 fig_emp = px.bar(
                     resumo_emp, x='Afastados', y='Empresa', orientation='h',
-                    text='Afastados', color='cor',
-                    color_discrete_map='identity',
+                    text='Afastados', color='cor', color_discrete_map='identity',
                 )
                 fig_emp.update_traces(textposition='outside', textfont_size=12)
                 fig_emp.update_layout(
                     height=max(200, len(resumo_emp) * 45),
                     margin=dict(t=10, b=10, l=10, r=40),
-                    xaxis_title="Qtd Afastados",
-                    yaxis_title="",
-                    showlegend=False,
+                    xaxis_title="Qtd Afastados", yaxis_title="", showlegend=False,
                 )
                 st.plotly_chart(fig_emp, use_container_width=True)
 
             st.markdown("---")
 
-            # ─── GRÁFICO MOTIVOS (obedece o filtro) ──────────────────────────
+            # ─── GRÁFICO MOTIVOS (obedece filtro empresa E mesma base do total) ──
             st.subheader("Motivos de Afastamento")
+            # usa df_af_mes que já é a união dos 3 grupos filtrada por empresa
             resumo_mot = df_af_mes[c_mot].value_counts().reset_index()
             resumo_mot.columns = ['motivo', 'quantidade']
             fig_mot = px.bar(
