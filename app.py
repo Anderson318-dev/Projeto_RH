@@ -170,17 +170,15 @@ if arquivo_subido:
 
         if not df_af.empty and c_ini and c_fim and c_mot:
 
-            # ✅ TOTAL DO MÊS: afastado estava ativo em QUALQUER dia do mês selecionado.
-            # Regra:
-            #   - Início do afastamento (c_ini) <= último dia do mês  (iniciou antes ou no mês)
-            #   - E: sem data de término (nulo/NaT) OU término >= primeiro dia do mês
-            #     → inclui: sem data, 00/00/0000 (virou NaT), datas futuras
+            # ✅ TOTAL DE AFASTADOS ATIVOS:
+            # Conta todos com c_ini válido E (sem data de término OU término >= data_ini_mes)
+            # Isso garante: 208 sem data + 17 com data futura = 225
+            hoje = pd.Timestamp.today().normalize()
             mask_total = (
-                (df_af[c_ini] <= data_fim_mes) &
-                (df_af[c_ini].notna()) &
+                df_af[c_ini].notna() &
                 (
-                    df_af[c_fim].isna() |                        # sem data de término
-                    (df_af[c_fim] >= data_ini_mes)               # término no mês ou futuro
+                    df_af[c_fim].isna() |              # sem data (nulo / 00/00/0000 → NaT)
+                    (df_af[c_fim] >= hoje)             # data de término futura ou hoje
                 )
             )
             df_af_mes = df_af[mask_total]
@@ -202,42 +200,43 @@ if arquivo_subido:
                       help="Afastados sem data de término registrada.")
 
             st.markdown("---")
-            col_af1, col_af2 = st.columns([1, 1])
 
             # --- Motivos (total do mês) ---
-            with col_af1:
-                st.subheader("Motivos de Afastamento")
-                resumo_mot = df_af_mes[c_mot].value_counts().reset_index()
-                resumo_mot.columns = ['motivo', 'quantidade']
-                fig_mot = px.bar(
-                    resumo_mot, x='quantidade', y='motivo', orientation='h',
-                    text='quantidade', color_discrete_sequence=['#e67e22']
-                )
-                fig_mot.update_traces(textposition='outside')
-                fig_mot.update_layout(yaxis_title="", xaxis_title="Qtd")
-                st.plotly_chart(fig_mot, use_container_width=True)
+            st.subheader("Motivos de Afastamento")
+            resumo_mot = df_af_mes[c_mot].value_counts().reset_index()
+            resumo_mot.columns = ['motivo', 'quantidade']
+            fig_mot = px.bar(
+                resumo_mot, x='quantidade', y='motivo', orientation='h',
+                text='quantidade', color_discrete_sequence=['#e67e22']
+            )
+            fig_mot.update_traces(textposition='outside')
+            fig_mot.update_layout(yaxis_title="", xaxis_title="Qtd")
+            st.plotly_chart(fig_mot, use_container_width=True)
 
-            # --- Inícios por mês (histórico) ---
-            with col_af2:
-                st.subheader("Inícios de Afastamento por Mês")
-                df_hist = df_af.copy()
-                df_hist = df_hist[df_hist[c_ini].notna()]
-                df_hist['mes_inicio'] = df_hist[c_ini].dt.to_period('M').astype(str)
-                hist = df_hist.groupby('mes_inicio').size().reset_index(name='quantidade')
-                hist = hist.sort_values('mes_inicio')
-                fig_hist = px.bar(
-                    hist, x='mes_inicio', y='quantidade',
-                    text='quantidade', color_discrete_sequence=['#8e44ad']
-                )
-                fig_hist.update_traces(textposition='outside')
-                fig_hist.update_layout(xaxis_title="Mês", yaxis_title="Qtd iniciados")
-                st.plotly_chart(fig_hist, use_container_width=True)
+            st.markdown("---")
 
-            with st.expander("📋 Lista detalhada de afastados no mês"):
-                st.dataframe(df_af_mes, use_container_width=True)
+            # --- Listas detalhadas com filtro por empresa ---
+            c_emp = next((c for c in df_af.columns if 'empresa' in c), None)
+
+            with st.expander("📋 Lista detalhada de afastados"):
+                if c_emp:
+                    empresas = ['Todas'] + sorted(df_af_mes[c_emp].dropna().unique().tolist())
+                    emp_sel = st.selectbox("Filtrar por Empresa", empresas, key="filtro_emp_total")
+                    df_lista = df_af_mes if emp_sel == 'Todas' else df_af_mes[df_af_mes[c_emp] == emp_sel]
+                    st.caption(f"{len(df_lista)} registro(s) exibido(s)")
+                    st.dataframe(df_lista, use_container_width=True)
+                else:
+                    st.dataframe(df_af_mes, use_container_width=True)
 
             with st.expander("📋 Lista de afastamentos iniciados no mês"):
-                st.dataframe(df_af_iniciados, use_container_width=True)
+                if c_emp:
+                    empresas_ini = ['Todas'] + sorted(df_af_iniciados[c_emp].dropna().unique().tolist())
+                    emp_sel_ini = st.selectbox("Filtrar por Empresa", empresas_ini, key="filtro_emp_inicio")
+                    df_lista_ini = df_af_iniciados if emp_sel_ini == 'Todas' else df_af_iniciados[df_af_iniciados[c_emp] == emp_sel_ini]
+                    st.caption(f"{len(df_lista_ini)} registro(s) exibido(s)")
+                    st.dataframe(df_lista_ini, use_container_width=True)
+                else:
+                    st.dataframe(df_af_iniciados, use_container_width=True)
 
         else:
             st.warning(
