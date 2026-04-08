@@ -163,48 +163,87 @@ if arquivo_subido:
 
         # --- 6. AFASTAMENTOS ---
         st.markdown("---")
-        col_af1, col_af2 = st.columns([1, 2])
+        st.subheader("🏥 Painel de Afastamentos")
 
         data_ini_mes = data_sel.replace(day=1)
         data_fim_mes = data_sel + pd.offsets.MonthEnd(0)
 
-        if not df_af.empty and c_ini and c_mot:
-            # ✅ Filtra apenas pela data de INÍCIO do afastamento dentro do mês selecionado.
-            # Sem data de término = ainda afastado = deve contar normalmente.
-            # Datas inválidas (00/00/0000) viram NaT após o to_datetime — são excluídas.
-            mask = (
+        if not df_af.empty and c_ini and c_fim and c_mot:
+
+            # ✅ TOTAL DO MÊS: afastado estava ativo em QUALQUER dia do mês selecionado.
+            # Regra:
+            #   - Início do afastamento (c_ini) <= último dia do mês  (iniciou antes ou no mês)
+            #   - E: sem data de término (nulo/NaT) OU término >= primeiro dia do mês
+            #     → inclui: sem data, 00/00/0000 (virou NaT), datas futuras
+            mask_total = (
+                (df_af[c_ini] <= data_fim_mes) &
+                (df_af[c_ini].notna()) &
+                (
+                    df_af[c_fim].isna() |                        # sem data de término
+                    (df_af[c_fim] >= data_ini_mes)               # término no mês ou futuro
+                )
+            )
+            df_af_mes = df_af[mask_total]
+
+            # Subconjunto: quem INICIOU o afastamento no mês selecionado
+            mask_inicio = (
                 (df_af[c_ini] >= data_ini_mes) &
                 (df_af[c_ini] <= data_fim_mes)
             )
-            df_af_mes = df_af[mask]
+            df_af_iniciados = df_af[mask_inicio]
+
+            # --- KPIs de afastamento ---
+            k1, k2, k3 = st.columns(3)
+            k1.metric("Total Afastados no Mês",   len(df_af_mes),
+                      help="Todos que estavam afastados em algum dia do mês (inclusive sem data de retorno ou com data futura).")
+            k2.metric("Iniciaram no Mês",          len(df_af_iniciados),
+                      help="Afastamentos que tiveram início dentro do mês selecionado.")
+            k3.metric("Sem Previsão de Retorno",   int(df_af_mes[c_fim].isna().sum()),
+                      help="Afastados sem data de término registrada.")
+
+            st.markdown("---")
+            col_af1, col_af2 = st.columns([1, 1])
+
+            # --- Motivos (total do mês) ---
+            with col_af1:
+                st.subheader("Motivos de Afastamento")
+                resumo_mot = df_af_mes[c_mot].value_counts().reset_index()
+                resumo_mot.columns = ['motivo', 'quantidade']
+                fig_mot = px.bar(
+                    resumo_mot, x='quantidade', y='motivo', orientation='h',
+                    text='quantidade', color_discrete_sequence=['#e67e22']
+                )
+                fig_mot.update_traces(textposition='outside')
+                fig_mot.update_layout(yaxis_title="", xaxis_title="Qtd")
+                st.plotly_chart(fig_mot, use_container_width=True)
+
+            # --- Inícios por mês (histórico) ---
+            with col_af2:
+                st.subheader("Inícios de Afastamento por Mês")
+                df_hist = df_af.copy()
+                df_hist = df_hist[df_hist[c_ini].notna()]
+                df_hist['mes_inicio'] = df_hist[c_ini].dt.to_period('M').astype(str)
+                hist = df_hist.groupby('mes_inicio').size().reset_index(name='quantidade')
+                hist = hist.sort_values('mes_inicio')
+                fig_hist = px.bar(
+                    hist, x='mes_inicio', y='quantidade',
+                    text='quantidade', color_discrete_sequence=['#8e44ad']
+                )
+                fig_hist.update_traces(textposition='outside')
+                fig_hist.update_layout(xaxis_title="Mês", yaxis_title="Qtd iniciados")
+                st.plotly_chart(fig_hist, use_container_width=True)
+
+            with st.expander("📋 Lista detalhada de afastados no mês"):
+                st.dataframe(df_af_mes, use_container_width=True)
+
+            with st.expander("📋 Lista de afastamentos iniciados no mês"):
+                st.dataframe(df_af_iniciados, use_container_width=True)
+
         else:
-            df_af_mes = pd.DataFrame()
             st.warning(
                 f"⚠️ Colunas mapeadas → Início: `{c_ini}` | Fim: `{c_fim}` | Motivo: `{c_mot}`\n\n"
                 f"Colunas disponíveis: {list(df_af.columns)}"
             )
-
-        with col_af1:
-            st.subheader("📋 Absenteísmo")
-            st.metric("Total de Afastados no Mês", len(df_af_mes))
-            st.info("Colaboradores que estiveram afastados durante o mês de referência.")
-
-        with col_af2:
-            st.subheader("Motivos de Afastamento")
-            if not df_af_mes.empty and c_mot:
-                resumo = df_af_mes[c_mot].value_counts().reset_index()
-                resumo.columns = [c_mot, 'count']
-                fig_af = px.bar(
-                    resumo, x='count', y=c_mot, orientation='h',
-                    text='count', color_discrete_sequence=['#34495e']
-                )
-                fig_af.update_traces(textposition='outside')
-                st.plotly_chart(fig_af, use_container_width=True)
-            else:
-                st.write("Sem registros para este período.")
-
-        with st.expander("Lista detalhada de afastados"):
-            st.dataframe(df_af_mes, use_container_width=True)
 
 else:
     st.info("Importe o BI_RH.xlsx para visualizar os indicadores.")
