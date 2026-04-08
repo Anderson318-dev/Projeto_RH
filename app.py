@@ -186,38 +186,20 @@ if arquivo_subido:
             )
             df_af_iniciados = df_af[mask_inicio]
 
-            # --- FILTRO ÚNICO POR EMPRESA NO TOPO ---
+            # --- FILTRO E VISUALIZAÇÃO POR EMPRESA ---
             c_emp = next((c for c in df_af.columns if 'empresa' in c), None)
 
             if c_emp:
-                todas_empresas = sorted(df_af_mes[c_emp].dropna().unique().tolist())
-                col_filt1, col_filt2 = st.columns([2, 3])
-                with col_filt1:
-                    emp_sel = st.selectbox(
-                        "🏢 Filtrar por Empresa",
-                        ['Todas'] + todas_empresas,
-                        key="filtro_empresa_global"
-                    )
+                # Resumo por empresa ANTES do filtro (base completa)
+                resumo_emp = (
+                    df_af_mes.groupby(c_emp)
+                    .size()
+                    .reset_index(name='Afastados')
+                    .sort_values('Afastados', ascending=False)
+                    .rename(columns={c_emp: 'Empresa'})
+                )
 
-                # Totais por empresa (sempre sobre base completa)
-                with col_filt2:
-                    resumo_emp = (
-                        df_af_mes.groupby(c_emp)
-                        .size()
-                        .reset_index(name='Afastados')
-                        .sort_values('Afastados', ascending=False)
-                        .rename(columns={c_emp: 'Empresa'})
-                    )
-                    st.dataframe(resumo_emp, hide_index=True, use_container_width=True, height=140)
-
-                # Aplica filtro nas duas bases
-                if emp_sel != 'Todas':
-                    df_af_mes      = df_af_mes[df_af_mes[c_emp] == emp_sel]
-                    df_af_iniciados = df_af_iniciados[df_af_iniciados[c_emp] == emp_sel]
-
-            st.markdown("---")
-
-            # --- KPIs (obedecem o filtro) ---
+            # --- KPIs (base completa, antes do filtro) ---
             k1, k2, k3 = st.columns(3)
             k1.metric("Total Afastados",        len(df_af_mes),
                       help="Afastados ativos: sem data de retorno ou com data futura.")
@@ -225,6 +207,47 @@ if arquivo_subido:
                       help="Afastamentos com início dentro do mês selecionado.")
             k3.metric("Sem Previsão de Retorno", int(df_af_mes[c_fim].isna().sum()),
                       help="Afastados sem data de término registrada.")
+
+            st.markdown("---")
+
+            # --- Gráfico de pizza por empresa + filtro lado a lado ---
+            if c_emp:
+                col_pizza, col_filtro = st.columns([3, 2])
+
+                with col_pizza:
+                    st.subheader("🏢 Distribuição por Empresa")
+                    fig_emp = px.pie(
+                        resumo_emp,
+                        names='Empresa',
+                        values='Afastados',
+                        hole=0.4,
+                        color_discrete_sequence=px.colors.qualitative.Set2
+                    )
+                    fig_emp.update_traces(
+                        textposition='outside',
+                        textinfo='label+value+percent',
+                        pull=[0.03] * len(resumo_emp)
+                    )
+                    fig_emp.update_layout(
+                        showlegend=False,
+                        margin=dict(t=20, b=20, l=20, r=20)
+                    )
+                    st.plotly_chart(fig_emp, use_container_width=True)
+
+                with col_filtro:
+                    st.subheader("🔍 Filtrar por Empresa")
+                    todas_empresas = sorted(resumo_emp['Empresa'].tolist())
+                    emp_sel = st.selectbox(
+                        "Selecione a empresa para filtrar os dados abaixo:",
+                        ['Todas'] + todas_empresas,
+                        key="filtro_empresa_global"
+                    )
+                    st.caption("O gráfico de motivos e as listas abaixo obedecem este filtro.")
+
+                # Aplica filtro nas duas bases
+                if emp_sel != 'Todas':
+                    df_af_mes       = df_af_mes[df_af_mes[c_emp] == emp_sel]
+                    df_af_iniciados = df_af_iniciados[df_af_iniciados[c_emp] == emp_sel]
 
             st.markdown("---")
 
