@@ -12,38 +12,49 @@ def carregar_dados(file):
         xls = pd.ExcelFile(file)
         lista_abas = xls.sheet_names
 
-        # Localização automática das abas
         aba_t  = next((s for s in lista_abas if 'turn'  in s.lower()), None)
         aba_a  = next((s for s in lista_abas if 'admit' in s.lower()), None)
-        aba_af = next((s for s in lista_abas if 'afast' in s.lower()), None)
+        aba_af = next((s for s in lista_abas if s.strip().lower() == 'afastado'), None)
 
         df_turnover  = pd.read_excel(xls, sheet_name=aba_t)
         df_admitidos = pd.read_excel(xls, sheet_name=aba_a)
         df_af_raw    = pd.read_excel(xls, sheet_name=aba_af) if aba_af else pd.DataFrame()
 
-        # Padronização de colunas (strip + lower)
         for df in [df_turnover, df_admitidos]:
             df.columns = df.columns.str.strip().str.lower()
 
-        # Afastamento: strip + lower separado para mapear depois
         if not df_af_raw.empty:
             df_af_raw.columns = df_af_raw.columns.str.strip().str.lower()
 
-        # ✅ MAPEAMENTO CORRETO para as colunas reais da aba Afastado:
-        # Empresa | RE | Nome | Função | Admissão | Tipo Afastamento | Data início | Data término
-        cols_af = df_af_raw.columns if not df_af_raw.empty else []
-        c_ini = next((c for c in cols_af if 'data in' in c or 'início' in c or 'inicio' in c), None)
-        c_fim = next((c for c in cols_af if 'data t'  in c or 'término' in c or 'termino' in c), None)
-        c_mot = next((c for c in cols_af if 'tipo'    in c or 'motivo'  in c), None)
+        # ✅ MAPEAMENTO EXATO com base nas colunas reais detectadas:
+        # dtadmissao → data início do afastamento
+        # dtdemissao → data término do afastamento
+        # desc_motivoafastamento → motivo
+        cols_af = list(df_af_raw.columns) if not df_af_raw.empty else []
 
-        # Conversão de datas de afastamento
+        c_ini = next((c for c in cols_af if 'dtadm'       in c
+                                         or 'dt_adm'      in c
+                                         or 'data in'     in c
+                                         or 'início'      in c
+                                         or 'inicio'      in c), None)
+
+        c_fim = next((c for c in cols_af if 'dtdem'       in c
+                                         or 'dt_dem'      in c
+                                         or 'data t'      in c
+                                         or 'término'     in c
+                                         or 'termino'     in c), None)
+
+        c_mot = next((c for c in cols_af if 'desc_motivo' in c
+                                         or 'motivo'      in c
+                                         or 'tipo'        in c), None)
+
         if not df_af_raw.empty:
             if c_ini:
                 df_af_raw[c_ini] = pd.to_datetime(df_af_raw[c_ini], errors='coerce')
             if c_fim:
                 df_af_raw[c_fim] = pd.to_datetime(df_af_raw[c_fim], errors='coerce')
 
-        # --- TRATAMENTO DE DATAS DO TURNOVER ---
+        # --- TURNOVER ---
         col_mes_t = next((c for c in df_turnover.columns if 'mês' in c or 'mes' in c), None)
         df_turnover['mês_ano'] = pd.to_datetime(df_turnover[col_mes_t], errors='coerce')
         df_turnover = df_turnover.dropna(subset=['mês_ano'])
@@ -56,7 +67,6 @@ def carregar_dados(file):
             if c in df_turnover.columns:
                 df_turnover[c] = pd.to_numeric(df_turnover[c], errors='coerce').fillna(0)
 
-        # CÁLCULOS DE TAXAS
         df_turnover['turnover_taxa'] = (
             ((df_turnover['admissões'] + df_turnover['desligamentos']) / 2) /
             df_turnover['colaboradores'].replace(0, 1)
@@ -83,13 +93,12 @@ if arquivo_subido:
     if dados:
         df_t, df_a, df_af, (c_ini, c_fim, c_mot) = dados
 
-        ano_sel  = st.sidebar.selectbox("Ano",  sorted(df_t['ano'].unique(), reverse=True))
+        ano_sel  = st.sidebar.selectbox("Ano", sorted(df_t['ano'].unique(), reverse=True))
         df_meses = df_t[df_t['ano'] == ano_sel].sort_values('mês_ano')
         mes_sel  = st.sidebar.selectbox("Mês", df_meses['mes_nome'].unique())
 
-        # --- 3. LÓGICA DE COMPARAÇÃO ---
-        data_sel    = df_meses[df_meses['mes_nome'] == mes_sel]['mês_ano'].iloc[0]
-        per_atual   = data_sel.to_period('M')
+        data_sel     = df_meses[df_meses['mes_nome'] == mes_sel]['mês_ano'].iloc[0]
+        per_atual    = data_sel.to_period('M')
         per_anterior = (data_sel - pd.DateOffset(months=1)).to_period('M')
 
         row_atual    = df_t[df_t['periodo'] == per_atual].iloc[0]
@@ -105,21 +114,16 @@ if arquivo_subido:
         msg_ajuda = "Comparação com o mês anterior. 🔼/🔽 indicam a direção. Cores: Verde (Melhora) e Vermelho (Atenção)."
 
         c1, c2, c3, c4, c5 = st.columns(5)
-
         c1.metric("Efetivo", int(row_atual['colaboradores']),
                   delta=calc_delta(row_atual['colaboradores'], 'colaboradores'), help=msg_ajuda)
-
         c2.metric("Admissões", int(row_atual['admissões']),
                   delta=calc_delta(row_atual['admissões'], 'admissões'), help=msg_ajuda)
-
         c3.metric("Desligamentos", int(row_atual['desligamentos']),
                   delta=calc_delta(row_atual['desligamentos'], 'desligamentos'),
                   delta_color="inverse", help=msg_ajuda)
-
         c4.metric("Taxa Turnover", f"{row_atual['turnover_taxa']:.2f}%",
                   delta=f"{calc_delta(row_atual['turnover_taxa'], 'turnover_taxa'):.2f}%" if row_ant is not None else None,
                   delta_color="inverse", help=msg_ajuda)
-
         c5.metric("Taxa Retenção", f"{row_atual['retencao_taxa']:.2f}%",
                   delta=f"{calc_delta(row_atual['retencao_taxa'], 'retencao_taxa'):.2f}%" if row_ant is not None else None,
                   delta_color="inverse", help=msg_ajuda)
@@ -163,7 +167,6 @@ if arquivo_subido:
 
         data_fim_mes = data_sel + pd.offsets.MonthEnd(0)
 
-        # ✅ Guarda antes de usar as colunas mapeadas
         if not df_af.empty and c_ini and c_fim and c_mot:
             mask = (
                 (df_af[c_ini] <= data_fim_mes) &
@@ -172,13 +175,10 @@ if arquivo_subido:
             df_af_mes = df_af[mask]
         else:
             df_af_mes = pd.DataFrame()
-            if df_af.empty:
-                st.warning("⚠️ Aba de afastamentos não encontrada no arquivo.")
-            else:
-                st.warning(
-                    f"⚠️ Não foi possível identificar as colunas de data. "
-                    f"Colunas encontradas: {list(df_af.columns)}"
-                )
+            st.warning(
+                f"⚠️ Colunas mapeadas → Início: `{c_ini}` | Fim: `{c_fim}` | Motivo: `{c_mot}`\n\n"
+                f"Colunas disponíveis: {list(df_af.columns)}"
+            )
 
         with col_af1:
             st.subheader("📋 Absenteísmo")
