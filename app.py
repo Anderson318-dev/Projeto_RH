@@ -170,24 +170,28 @@ if arquivo_subido:
 
         if not df_af.empty and c_ini and c_fim and c_mot:
 
-            # ─── BASE GERAL DO MÊS (sem filtro de empresa) ───────────────────
-            # Total: c_ini válido + (sem término OU término >= início do mês)
-            # Não restringe c_ini pelo mês — afastamentos anteriores que continuam contam
-            mask_total = (
-                df_af[c_ini].notna() &
-                (
-                    df_af[c_fim].isna() |
-                    (df_af[c_fim] >= data_ini_mes)
-                )
-            )
-            df_af_geral    = df_af[mask_total].copy()
+            hoje = pd.Timestamp.today().normalize()
 
-            # Iniciados: apenas quem começou dentro do mês selecionado
-            mask_inicio = (
+            # ─── GRUPOS INDEPENDENTES E SEM SOBREPOSIÇÃO ─────────────────────
+            # 1) Sem previsão de retorno: c_fim nulo/NaT (00/00/0000 já virou NaT)
+            mask_sem_prev = df_af[c_ini].notna() & df_af[c_fim].isna()
+
+            # 2) Retorno previsto: c_fim preenchido e > hoje
+            mask_retorno  = df_af[c_ini].notna() & df_af[c_fim].notna() & (df_af[c_fim] > hoje)
+
+            # 3) Iniciaram no mês selecionado (com ou sem data de término)
+            mask_inicio   = (
+                df_af[c_ini].notna() &
                 (df_af[c_ini] >= data_ini_mes) &
                 (df_af[c_ini] <= data_fim_mes)
             )
-            df_af_iniciados_geral = df_af[mask_inicio].copy()
+
+            df_sem_prev  = df_af[mask_sem_prev].copy()
+            df_retorno   = df_af[mask_retorno].copy()
+            df_iniciados_geral = df_af[mask_inicio].copy()
+
+            # 4) Total = união dos três grupos (sem duplicatas)
+            df_af_geral = pd.concat([df_sem_prev, df_retorno, df_iniciados_geral])                             .drop_duplicates()
 
             # ─── FILTRO POR EMPRESA ───────────────────────────────────────────
             c_emp = next((c for c in df_af.columns if 'empresa' in c), None)
@@ -203,24 +207,35 @@ if arquivo_subido:
             else:
                 emp_sel = 'Todas'
 
-            # Aplica filtro → gera bases filtradas para KPIs, gráficos e listas
+            # Aplica filtro de empresa → gera bases filtradas
             if emp_sel != 'Todas' and c_emp:
-                df_af_mes       = df_af_geral[df_af_geral[c_emp] == emp_sel].copy()
-                df_af_iniciados = df_af_iniciados_geral[df_af_iniciados_geral[c_emp] == emp_sel].copy()
+                df_af_mes    = df_af_geral[df_af_geral[c_emp] == emp_sel].copy()
+                df_sem_prev_f = df_sem_prev[df_sem_prev[c_emp] == emp_sel].copy()
+                df_retorno_f  = df_retorno[df_retorno[c_emp] == emp_sel].copy()
+                df_iniciados  = df_iniciados_geral[df_iniciados_geral[c_emp] == emp_sel].copy()
             else:
-                df_af_mes       = df_af_geral.copy()
-                df_af_iniciados = df_af_iniciados_geral.copy()
+                df_af_mes     = df_af_geral.copy()
+                df_sem_prev_f = df_sem_prev.copy()
+                df_retorno_f  = df_retorno.copy()
+                df_iniciados  = df_iniciados_geral.copy()
 
             st.markdown("---")
 
             # ─── KPIs (obedecem o filtro) ─────────────────────────────────────
-            k1, k2, k3 = st.columns(3)
-            k1.metric("Total Afastados",        len(df_af_mes),
-                      help="Afastados ativos no mês: sem data de retorno ou término após o início do mês.")
-            k2.metric("Iniciaram no Mês",        len(df_af_iniciados),
+            # Total = Sem previsão + Retorno previsto + Iniciaram no mês (união sem duplicatas)
+            total_af = len(
+                pd.concat([df_sem_prev_f, df_retorno_f, df_iniciados])
+                .drop_duplicates()
+            )
+            k1, k2, k3, k4 = st.columns(4)
+            k1.metric("Total Afastados",         total_af,
+                      help="União de: Sem previsão de retorno + Retorno previsto + Iniciaram no mês.")
+            k2.metric("Sem Previsão de Retorno",  len(df_sem_prev_f),
+                      help="Afastados com c_fim nulo, vazio ou 00/00/0000.")
+            k3.metric("Retorno Previsto",          len(df_retorno_f),
+                      help="Afastados com data de término preenchida e maior que hoje.")
+            k4.metric("Iniciaram no Mês",          len(df_iniciados),
                       help="Afastamentos com início dentro do mês selecionado.")
-            k3.metric("Sem Previsão de Retorno", int(df_af_mes[c_fim].isna().sum()),
-                      help="Afastados sem data de término registrada.")
 
             st.markdown("---")
 
@@ -270,13 +285,21 @@ if arquivo_subido:
             st.markdown("---")
 
             # ─── LISTAS DETALHADAS (obedecem o filtro) ───────────────────────
-            with st.expander("📋 Lista detalhada de afastados"):
-                st.caption(f"{len(df_af_mes)} registro(s) exibido(s)")
+            with st.expander("📋 Lista detalhada — Total de afastados"):
+                st.caption(f"{total_af} registro(s) exibido(s)")
                 st.dataframe(df_af_mes, use_container_width=True)
 
-            with st.expander("📋 Lista de afastamentos iniciados no mês"):
-                st.caption(f"{len(df_af_iniciados)} registro(s) exibido(s)")
-                st.dataframe(df_af_iniciados, use_container_width=True)
+            with st.expander("📋 Lista — Sem previsão de retorno"):
+                st.caption(f"{len(df_sem_prev_f)} registro(s) exibido(s)")
+                st.dataframe(df_sem_prev_f, use_container_width=True)
+
+            with st.expander("📋 Lista — Retorno previsto"):
+                st.caption(f"{len(df_retorno_f)} registro(s) exibido(s)")
+                st.dataframe(df_retorno_f, use_container_width=True)
+
+            with st.expander("📋 Lista — Iniciaram no mês"):
+                st.caption(f"{len(df_iniciados)} registro(s) exibido(s)")
+                st.dataframe(df_iniciados, use_container_width=True)
 
         else:
             st.warning(
