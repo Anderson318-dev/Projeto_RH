@@ -170,16 +170,17 @@ if arquivo_subido:
 
         if not df_af.empty and c_ini and c_fim and c_mot:
 
-            hoje = pd.Timestamp.today().normalize()
-
-            # Base completa: afastados ativos (sem data ou data futura)
+            # ✅ Referência temporal = fim do mês selecionado (não "hoje")
+            # Assim ao trocar o mês no filtro, os afastados refletem aquele período.
+            # Regra: iniciou antes ou durante o mês E (sem término OU término >= início do mês)
             mask_total = (
                 df_af[c_ini].notna() &
-                (df_af[c_fim].isna() | (df_af[c_fim] >= hoje))
+                (df_af[c_ini] <= data_fim_mes) &
+                (df_af[c_fim].isna() | (df_af[c_fim] >= data_ini_mes))
             )
             df_af_mes = df_af[mask_total]
 
-            # Base iniciados no mês
+            # Base iniciados no mês selecionado
             mask_inicio = (
                 (df_af[c_ini] >= data_ini_mes) &
                 (df_af[c_ini] <= data_fim_mes)
