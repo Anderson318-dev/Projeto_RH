@@ -170,38 +170,65 @@ if arquivo_subido:
 
         if not df_af.empty and c_ini and c_fim and c_mot:
 
-            # ✅ TOTAL DE AFASTADOS ATIVOS:
-            # Conta todos com c_ini válido E (sem data de término OU término >= data_ini_mes)
-            # Isso garante: 208 sem data + 17 com data futura = 225
             hoje = pd.Timestamp.today().normalize()
+
+            # Base completa: afastados ativos (sem data ou data futura)
             mask_total = (
                 df_af[c_ini].notna() &
-                (
-                    df_af[c_fim].isna() |              # sem data (nulo / 00/00/0000 → NaT)
-                    (df_af[c_fim] >= hoje)             # data de término futura ou hoje
-                )
+                (df_af[c_fim].isna() | (df_af[c_fim] >= hoje))
             )
             df_af_mes = df_af[mask_total]
 
-            # Subconjunto: quem INICIOU o afastamento no mês selecionado
+            # Base iniciados no mês
             mask_inicio = (
                 (df_af[c_ini] >= data_ini_mes) &
                 (df_af[c_ini] <= data_fim_mes)
             )
             df_af_iniciados = df_af[mask_inicio]
 
-            # --- KPIs de afastamento ---
+            # --- FILTRO ÚNICO POR EMPRESA NO TOPO ---
+            c_emp = next((c for c in df_af.columns if 'empresa' in c), None)
+
+            if c_emp:
+                todas_empresas = sorted(df_af_mes[c_emp].dropna().unique().tolist())
+                col_filt1, col_filt2 = st.columns([2, 3])
+                with col_filt1:
+                    emp_sel = st.selectbox(
+                        "🏢 Filtrar por Empresa",
+                        ['Todas'] + todas_empresas,
+                        key="filtro_empresa_global"
+                    )
+
+                # Totais por empresa (sempre sobre base completa)
+                with col_filt2:
+                    resumo_emp = (
+                        df_af_mes.groupby(c_emp)
+                        .size()
+                        .reset_index(name='Afastados')
+                        .sort_values('Afastados', ascending=False)
+                        .rename(columns={c_emp: 'Empresa'})
+                    )
+                    st.dataframe(resumo_emp, hide_index=True, use_container_width=True, height=140)
+
+                # Aplica filtro nas duas bases
+                if emp_sel != 'Todas':
+                    df_af_mes      = df_af_mes[df_af_mes[c_emp] == emp_sel]
+                    df_af_iniciados = df_af_iniciados[df_af_iniciados[c_emp] == emp_sel]
+
+            st.markdown("---")
+
+            # --- KPIs (obedecem o filtro) ---
             k1, k2, k3 = st.columns(3)
-            k1.metric("Total Afastados no Mês",   len(df_af_mes),
-                      help="Todos que estavam afastados em algum dia do mês (inclusive sem data de retorno ou com data futura).")
-            k2.metric("Iniciaram no Mês",          len(df_af_iniciados),
-                      help="Afastamentos que tiveram início dentro do mês selecionado.")
-            k3.metric("Sem Previsão de Retorno",   int(df_af_mes[c_fim].isna().sum()),
+            k1.metric("Total Afastados",        len(df_af_mes),
+                      help="Afastados ativos: sem data de retorno ou com data futura.")
+            k2.metric("Iniciaram no Mês",        len(df_af_iniciados),
+                      help="Afastamentos com início dentro do mês selecionado.")
+            k3.metric("Sem Previsão de Retorno", int(df_af_mes[c_fim].isna().sum()),
                       help="Afastados sem data de término registrada.")
 
             st.markdown("---")
 
-            # --- Motivos (total do mês) ---
+            # --- Gráfico de motivos (obedece o filtro) ---
             st.subheader("Motivos de Afastamento")
             resumo_mot = df_af_mes[c_mot].value_counts().reset_index()
             resumo_mot.columns = ['motivo', 'quantidade']
@@ -215,28 +242,14 @@ if arquivo_subido:
 
             st.markdown("---")
 
-            # --- Listas detalhadas com filtro por empresa ---
-            c_emp = next((c for c in df_af.columns if 'empresa' in c), None)
-
+            # --- Listas detalhadas (obedecem o filtro) ---
             with st.expander("📋 Lista detalhada de afastados"):
-                if c_emp:
-                    empresas = ['Todas'] + sorted(df_af_mes[c_emp].dropna().unique().tolist())
-                    emp_sel = st.selectbox("Filtrar por Empresa", empresas, key="filtro_emp_total")
-                    df_lista = df_af_mes if emp_sel == 'Todas' else df_af_mes[df_af_mes[c_emp] == emp_sel]
-                    st.caption(f"{len(df_lista)} registro(s) exibido(s)")
-                    st.dataframe(df_lista, use_container_width=True)
-                else:
-                    st.dataframe(df_af_mes, use_container_width=True)
+                st.caption(f"{len(df_af_mes)} registro(s) exibido(s)")
+                st.dataframe(df_af_mes, use_container_width=True)
 
             with st.expander("📋 Lista de afastamentos iniciados no mês"):
-                if c_emp:
-                    empresas_ini = ['Todas'] + sorted(df_af_iniciados[c_emp].dropna().unique().tolist())
-                    emp_sel_ini = st.selectbox("Filtrar por Empresa", empresas_ini, key="filtro_emp_inicio")
-                    df_lista_ini = df_af_iniciados if emp_sel_ini == 'Todas' else df_af_iniciados[df_af_iniciados[c_emp] == emp_sel_ini]
-                    st.caption(f"{len(df_lista_ini)} registro(s) exibido(s)")
-                    st.dataframe(df_lista_ini, use_container_width=True)
-                else:
-                    st.dataframe(df_af_iniciados, use_container_width=True)
+                st.caption(f"{len(df_af_iniciados)} registro(s) exibido(s)")
+                st.dataframe(df_af_iniciados, use_container_width=True)
 
         else:
             st.warning(
