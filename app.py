@@ -170,40 +170,53 @@ if arquivo_subido:
 
         if not df_af.empty and c_ini and c_fim and c_mot:
 
-            # ✅ Referência temporal = fim do mês selecionado (não "hoje")
-            # Assim ao trocar o mês no filtro, os afastados refletem aquele período.
-            # Regra: iniciou antes ou durante o mês E (sem término OU término >= início do mês)
+            # ─── BASE GERAL DO MÊS (sem filtro de empresa) ───────────────────
+            # Total: c_ini válido + (sem término OU término >= início do mês)
+            # Não restringe c_ini pelo mês — afastamentos anteriores que continuam contam
             mask_total = (
                 df_af[c_ini].notna() &
-                (df_af[c_ini] <= data_fim_mes) &
-                (df_af[c_fim].isna() | (df_af[c_fim] >= data_ini_mes))
+                (
+                    df_af[c_fim].isna() |
+                    (df_af[c_fim] >= data_ini_mes)
+                )
             )
-            df_af_mes = df_af[mask_total]
+            df_af_geral    = df_af[mask_total].copy()
 
-            # Base iniciados no mês selecionado
+            # Iniciados: apenas quem começou dentro do mês selecionado
             mask_inicio = (
                 (df_af[c_ini] >= data_ini_mes) &
                 (df_af[c_ini] <= data_fim_mes)
             )
-            df_af_iniciados = df_af[mask_inicio]
+            df_af_iniciados_geral = df_af[mask_inicio].copy()
 
-            # --- FILTRO E VISUALIZAÇÃO POR EMPRESA ---
+            # ─── FILTRO POR EMPRESA ───────────────────────────────────────────
             c_emp = next((c for c in df_af.columns if 'empresa' in c), None)
 
+            # Selectbox usando a base geral (sempre mostra todas as empresas)
             if c_emp:
-                # Resumo por empresa ANTES do filtro (base completa)
-                resumo_emp = (
-                    df_af_mes.groupby(c_emp)
-                    .size()
-                    .reset_index(name='Afastados')
-                    .sort_values('Afastados', ascending=False)
-                    .rename(columns={c_emp: 'Empresa'})
+                todas_empresas = sorted(df_af_geral[c_emp].dropna().unique().tolist())
+                emp_sel = st.selectbox(
+                    "🏢 Filtrar por Empresa",
+                    ['Todas'] + todas_empresas,
+                    key="filtro_empresa_global"
                 )
+            else:
+                emp_sel = 'Todas'
 
-            # --- KPIs (base completa, antes do filtro) ---
+            # Aplica filtro → gera bases filtradas para KPIs, gráficos e listas
+            if emp_sel != 'Todas' and c_emp:
+                df_af_mes       = df_af_geral[df_af_geral[c_emp] == emp_sel].copy()
+                df_af_iniciados = df_af_iniciados_geral[df_af_iniciados_geral[c_emp] == emp_sel].copy()
+            else:
+                df_af_mes       = df_af_geral.copy()
+                df_af_iniciados = df_af_iniciados_geral.copy()
+
+            st.markdown("---")
+
+            # ─── KPIs (obedecem o filtro) ─────────────────────────────────────
             k1, k2, k3 = st.columns(3)
             k1.metric("Total Afastados",        len(df_af_mes),
-                      help="Afastados ativos: sem data de retorno ou com data futura.")
+                      help="Afastados ativos no mês: sem data de retorno ou término após o início do mês.")
             k2.metric("Iniciaram no Mês",        len(df_af_iniciados),
                       help="Afastamentos com início dentro do mês selecionado.")
             k3.metric("Sem Previsão de Retorno", int(df_af_mes[c_fim].isna().sum()),
@@ -211,61 +224,38 @@ if arquivo_subido:
 
             st.markdown("---")
 
-            # --- Filtro por empresa + pizza lado a lado ---
+            # ─── GRÁFICO BARRAS POR EMPRESA (sempre base geral, destaca seleção) ──
             if c_emp:
-                col_filtro, col_pizza = st.columns([2, 3])
-
-                with col_filtro:
-                    st.subheader("🔍 Filtrar por Empresa")
-                    todas_empresas = sorted(resumo_emp['Empresa'].tolist())
-                    emp_sel = st.selectbox(
-                        "Selecione a empresa:",
-                        ['Todas'] + todas_empresas,
-                        key="filtro_empresa_global"
-                    )
-                    st.caption("O gráfico de motivos e as listas abaixo obedecem este filtro.")
-
-                # Aplica filtro nas duas bases ANTES de gerar a pizza
-                if emp_sel != 'Todas':
-                    df_af_mes       = df_af_mes[df_af_mes[c_emp] == emp_sel]
-                    df_af_iniciados = df_af_iniciados[df_af_iniciados[c_emp] == emp_sel]
-
-                # Pizza recalculada APÓS o filtro
-                resumo_emp_filtrado = (
-                    df_af_mes.groupby(c_emp)
+                resumo_emp = (
+                    df_af_geral.groupby(c_emp)
                     .size()
                     .reset_index(name='Afastados')
                     .rename(columns={c_emp: 'Empresa'})
+                    .sort_values('Afastados', ascending=True)
                 )
-
-                with col_pizza:
-                    st.subheader("🏢 Afastados por Empresa")
-                    resumo_emp_ord = resumo_emp_filtrado.sort_values('Afastados', ascending=True)
-                    fig_emp = px.bar(
-                        resumo_emp_ord,
-                        x='Afastados',
-                        y='Empresa',
-                        orientation='h',
-                        text='Afastados',
-                        color='Afastados',
-                        color_continuous_scale='Blues',
-                    )
-                    fig_emp.update_traces(
-                        textposition='outside',
-                        textfont_size=12,
-                    )
-                    fig_emp.update_layout(
-                        height=max(200, len(resumo_emp_filtrado) * 50),
-                        margin=dict(t=10, b=10, l=10, r=40),
-                        xaxis_title="Qtd Afastados",
-                        yaxis_title="",
-                        coloraxis_showscale=False,
-                    )
-                    st.plotly_chart(fig_emp, use_container_width=True)
+                # Destaca empresa selecionada com cor diferente
+                resumo_emp['cor'] = resumo_emp['Empresa'].apply(
+                    lambda e: '#e74c3c' if (emp_sel != 'Todas' and e == emp_sel) else '#3498db'
+                )
+                st.subheader("🏢 Afastados por Empresa")
+                fig_emp = px.bar(
+                    resumo_emp, x='Afastados', y='Empresa', orientation='h',
+                    text='Afastados', color='cor',
+                    color_discrete_map='identity',
+                )
+                fig_emp.update_traces(textposition='outside', textfont_size=12)
+                fig_emp.update_layout(
+                    height=max(200, len(resumo_emp) * 45),
+                    margin=dict(t=10, b=10, l=10, r=40),
+                    xaxis_title="Qtd Afastados",
+                    yaxis_title="",
+                    showlegend=False,
+                )
+                st.plotly_chart(fig_emp, use_container_width=True)
 
             st.markdown("---")
 
-            # --- Gráfico de motivos (obedece o filtro) ---
+            # ─── GRÁFICO MOTIVOS (obedece o filtro) ──────────────────────────
             st.subheader("Motivos de Afastamento")
             resumo_mot = df_af_mes[c_mot].value_counts().reset_index()
             resumo_mot.columns = ['motivo', 'quantidade']
@@ -279,7 +269,7 @@ if arquivo_subido:
 
             st.markdown("---")
 
-            # --- Listas detalhadas (obedecem o filtro) ---
+            # ─── LISTAS DETALHADAS (obedecem o filtro) ───────────────────────
             with st.expander("📋 Lista detalhada de afastados"):
                 st.caption(f"{len(df_af_mes)} registro(s) exibido(s)")
                 st.dataframe(df_af_mes, use_container_width=True)
