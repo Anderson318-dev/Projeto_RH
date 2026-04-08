@@ -210,44 +210,52 @@ if arquivo_subido:
 
             st.markdown("---")
 
-            # --- Gráfico de pizza por empresa + filtro lado a lado ---
+            # --- Filtro por empresa + pizza lado a lado ---
             if c_emp:
-                col_pizza, col_filtro = st.columns([3, 2])
+                col_filtro, col_pizza = st.columns([2, 3])
+
+                with col_filtro:
+                    st.subheader("🔍 Filtrar por Empresa")
+                    todas_empresas = sorted(resumo_emp['Empresa'].tolist())
+                    emp_sel = st.selectbox(
+                        "Selecione a empresa:",
+                        ['Todas'] + todas_empresas,
+                        key="filtro_empresa_global"
+                    )
+                    st.caption("O gráfico de motivos e as listas abaixo obedecem este filtro.")
+
+                # Aplica filtro nas duas bases ANTES de gerar a pizza
+                if emp_sel != 'Todas':
+                    df_af_mes       = df_af_mes[df_af_mes[c_emp] == emp_sel]
+                    df_af_iniciados = df_af_iniciados[df_af_iniciados[c_emp] == emp_sel]
+
+                # Pizza recalculada APÓS o filtro
+                resumo_emp_filtrado = (
+                    df_af_mes.groupby(c_emp)
+                    .size()
+                    .reset_index(name='Afastados')
+                    .rename(columns={c_emp: 'Empresa'})
+                )
 
                 with col_pizza:
                     st.subheader("🏢 Distribuição por Empresa")
                     fig_emp = px.pie(
-                        resumo_emp,
+                        resumo_emp_filtrado,
                         names='Empresa',
                         values='Afastados',
                         hole=0.4,
                         color_discrete_sequence=px.colors.qualitative.Set2
                     )
                     fig_emp.update_traces(
-                        textposition='outside',
+                        textposition='inside',
                         textinfo='label+value+percent',
-                        pull=[0.03] * len(resumo_emp)
                     )
                     fig_emp.update_layout(
                         showlegend=False,
-                        margin=dict(t=20, b=20, l=20, r=20)
+                        height=300,
+                        margin=dict(t=10, b=10, l=10, r=10)
                     )
                     st.plotly_chart(fig_emp, use_container_width=True)
-
-                with col_filtro:
-                    st.subheader("🔍 Filtrar por Empresa")
-                    todas_empresas = sorted(resumo_emp['Empresa'].tolist())
-                    emp_sel = st.selectbox(
-                        "Selecione a empresa para filtrar os dados abaixo:",
-                        ['Todas'] + todas_empresas,
-                        key="filtro_empresa_global"
-                    )
-                    st.caption("O gráfico de motivos e as listas abaixo obedecem este filtro.")
-
-                # Aplica filtro nas duas bases
-                if emp_sel != 'Todas':
-                    df_af_mes       = df_af_mes[df_af_mes[c_emp] == emp_sel]
-                    df_af_iniciados = df_af_iniciados[df_af_iniciados[c_emp] == emp_sel]
 
             st.markdown("---")
 
