@@ -165,12 +165,16 @@ if arquivo_subido:
         st.markdown("---")
         col_af1, col_af2 = st.columns([1, 2])
 
+        data_ini_mes = data_sel.replace(day=1)
         data_fim_mes = data_sel + pd.offsets.MonthEnd(0)
 
-        if not df_af.empty and c_ini and c_fim and c_mot:
+        if not df_af.empty and c_ini and c_mot:
+            # ✅ Filtra apenas pela data de INÍCIO do afastamento dentro do mês selecionado.
+            # Sem data de término = ainda afastado = deve contar normalmente.
+            # Datas inválidas (00/00/0000) viram NaT após o to_datetime — são excluídas.
             mask = (
-                (df_af[c_ini] <= data_fim_mes) &
-                ((df_af[c_fim].isnull()) | (df_af[c_fim] >= data_sel))
+                (df_af[c_ini] >= data_ini_mes) &
+                (df_af[c_ini] <= data_fim_mes)
             )
             df_af_mes = df_af[mask]
         else:
