@@ -239,22 +239,27 @@ if arquivo_subido:
                 )
 
                 with col_pizza:
-                    st.subheader("🏢 Distribuição por Empresa")
-                    fig_emp = px.pie(
-                        resumo_emp_filtrado,
-                        names='Empresa',
-                        values='Afastados',
-                        hole=0.4,
-                        color_discrete_sequence=px.colors.qualitative.Set2
+                    st.subheader("🏢 Afastados por Empresa")
+                    resumo_emp_ord = resumo_emp_filtrado.sort_values('Afastados', ascending=True)
+                    fig_emp = px.bar(
+                        resumo_emp_ord,
+                        x='Afastados',
+                        y='Empresa',
+                        orientation='h',
+                        text='Afastados',
+                        color='Afastados',
+                        color_continuous_scale='Blues',
                     )
                     fig_emp.update_traces(
-                        textposition='inside',
-                        textinfo='label+value+percent',
+                        textposition='outside',
+                        textfont_size=12,
                     )
                     fig_emp.update_layout(
-                        showlegend=False,
-                        height=300,
-                        margin=dict(t=10, b=10, l=10, r=10)
+                        height=max(200, len(resumo_emp_filtrado) * 50),
+                        margin=dict(t=10, b=10, l=10, r=40),
+                        xaxis_title="Qtd Afastados",
+                        yaxis_title="",
+                        coloraxis_showscale=False,
                     )
                     st.plotly_chart(fig_emp, use_container_width=True)
 
