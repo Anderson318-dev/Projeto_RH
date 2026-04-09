@@ -3,8 +3,8 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 
-# --- 1. CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(page_title="Dashboard RH Profissional", layout="wide")
+
 
 @st.cache_data
 def carregar_dados(file):
@@ -14,6 +14,7 @@ def carregar_dados(file):
 
         aba_t  = next((s for s in lista_abas if 'turn'  in s.lower()), None)
         aba_a  = next((s for s in lista_abas if 'admit' in s.lower()), None)
+        # Busca aba Afastado com ou sem espaço, strip para comparar
         aba_af = next((s for s in lista_abas if s.strip().lower() == 'afastado'), None)
 
         df_turnover  = pd.read_excel(xls, sheet_name=aba_t)
@@ -24,31 +25,23 @@ def carregar_dados(file):
             df.columns = df.columns.str.strip().str.lower()
 
         if not df_af_raw.empty:
-            df_af_raw.columns = df_af_raw.columns.str.strip().str.lower()
+            # Mantém nomes originais para facilitar mapeamento por nome legível
+            df_af_raw.columns = df_af_raw.columns.str.strip()
 
-        cols_af = list(df_af_raw.columns) if not df_af_raw.empty else []
-
-        c_ini = next((c for c in cols_af if 'dtadm'   in c
-                                         or 'dt_adm'  in c
-                                         or 'data in' in c
-                                         or 'início'  in c
-                                         or 'inicio'  in c), None)
-
-        c_fim = next((c for c in cols_af if 'dtdem'   in c
-                                         or 'dt_dem'  in c
-                                         or 'data t'  in c
-                                         or 'término' in c
-                                         or 'termino' in c), None)
-
-        c_mot = next((c for c in cols_af if 'desc_motivo' in c
-                                         or 'motivo'      in c
-                                         or 'tipo'        in c), None)
+        # Mapeamento fixo das colunas da aba Afastado
+        C_EMP = 'Empresa'
+        C_INI = 'Data início'
+        C_FIM = 'Data término'
+        C_MOT = 'Tipo Afastamento'
 
         if not df_af_raw.empty:
-            if c_ini:
-                df_af_raw[c_ini] = pd.to_datetime(df_af_raw[c_ini], errors='coerce')
-            if c_fim:
-                df_af_raw[c_fim] = pd.to_datetime(df_af_raw[c_fim], errors='coerce')
+            # Converte Data início
+            df_af_raw[C_INI] = pd.to_datetime(df_af_raw[C_INI], errors='coerce')
+
+            # Data término: trata "00/00/0000" como nulo, converte o resto
+            df_af_raw[C_FIM] = df_af_raw[C_FIM].astype(str).str.strip()
+            df_af_raw[C_FIM] = df_af_raw[C_FIM].replace({'00/00/0000': None, 'nan': None, 'NaT': None, '': None})
+            df_af_raw[C_FIM] = pd.to_datetime(df_af_raw[C_FIM], errors='coerce')
 
         # --- TURNOVER ---
         col_mes_t = next((c for c in df_turnover.columns if 'mês' in c or 'mes' in c), None)
@@ -73,22 +66,46 @@ def carregar_dados(file):
             df_turnover['colaboradores'].replace(0, 1)
         ) * 100
 
-        return df_turnover, df_admitidos, df_af_raw, (c_ini, c_fim, c_mot)
+        return df_turnover, df_admitidos, df_af_raw, (C_INI, C_FIM, C_MOT, C_EMP)
 
     except Exception as e:
         st.error(f"Erro ao processar: {e}")
         return None
 
 
-# --- 2. INTERFACE ---
+def calc_afastamentos(df, c_ini, c_fim, ini_mes, fim_mes):
+    """
+    Retorna dois DataFrames:
+      - iniciados: Data início dentro do mês selecionado
+      - sem_retorno: Data início <= fim do mês E (Data término nula OU futura ao fim do mês)
+    """
+    base = df[df[c_ini].notna()].copy()
+
+    iniciados = base[
+        (base[c_ini] >= ini_mes) &
+        (base[c_ini] <= fim_mes)
+    ]
+
+    sem_retorno = base[
+        (base[c_ini] <= fim_mes) &
+        (base[c_fim].isna() | (base[c_fim] > fim_mes))
+    ]
+
+    return iniciados, sem_retorno
+
+
+# ─── INTERFACE ────────────────────────────────────────────────────────────────
 st.sidebar.header("📁 Importação")
 arquivo_subido = st.sidebar.file_uploader("Selecione o BI_RH.xlsx", type=["xlsx"])
 
 if arquivo_subido:
     dados = carregar_dados(arquivo_subido)
     if dados:
-        df_t, df_a, df_af, (c_ini, c_fim, c_mot) = dados
+        df_t, df_a, df_af, (c_ini, c_fim, c_mot, c_emp) = dados
 
+        # ─── FILTROS TURNOVER ──────────────────────────────────────────────
+        st.sidebar.markdown("---")
+        st.sidebar.subheader("📊 Turnover")
         ano_sel  = st.sidebar.selectbox("Ano", sorted(df_t['ano'].unique(), reverse=True))
         df_meses = df_t[df_t['ano'] == ano_sel].sort_values('mês_ano')
         mes_sel  = st.sidebar.selectbox("Mês", df_meses['mes_nome'].unique())
@@ -101,13 +118,13 @@ if arquivo_subido:
         row_ant_list = df_t[df_t['periodo'] == per_anterior]
         row_ant      = row_ant_list.iloc[0] if not row_ant_list.empty else None
 
-        # --- 4. KPIs ---
+        # ─── KPIs TURNOVER ─────────────────────────────────────────────────
         st.title(f"📊 Indicadores RH - {mes_sel}/{ano_sel}")
 
         def calc_delta(val_atual, col):
             return (val_atual - row_ant[col]) if row_ant is not None else None
 
-        msg_ajuda = "Comparação com o mês anterior. 🔼/🔽 indicam a direção. Cores: Verde (Melhora) e Vermelho (Atenção)."
+        msg_ajuda = "Comparação com o mês anterior. 🔼/🔽 indicam a direção."
 
         c1, c2, c3, c4, c5 = st.columns(5)
         c1.metric("Efetivo", int(row_atual['colaboradores']),
@@ -126,7 +143,7 @@ if arquivo_subido:
 
         st.markdown("---")
 
-        # --- 5. GRÁFICOS ---
+        # ─── GRÁFICO TURNOVER ──────────────────────────────────────────────
         st.subheader("📈 Evolução da Movimentação Mensal")
         df_ano_plot = df_t[df_t['ano'] == ano_sel].sort_values('mês_ano')
 
@@ -157,157 +174,161 @@ if arquivo_subido:
         )
         st.plotly_chart(fig, use_container_width=True)
 
-        # --- 6. AFASTAMENTOS ---
+        # ─── AFASTAMENTOS ──────────────────────────────────────────────────
         st.markdown("---")
         st.subheader("🏥 Painel de Afastamentos")
 
-        data_ini_mes = data_sel.replace(day=1)
-        data_fim_mes = data_sel + pd.offsets.MonthEnd(0)
+        if not df_af.empty:
 
-        if not df_af.empty and c_ini and c_fim and c_mot:
+            # ── Filtros próprios para Afastamentos ──────────────────────────
+            st.sidebar.markdown("---")
+            st.sidebar.subheader("🏥 Afastamentos")
 
-            # ─── FUNÇÃO AUXILIAR: calcula grupos para qualquer período/base ───
-            def calc_grupos(base, ini_mes, fim_mes):
-                # Iniciaram no mês: c_ini dentro do período
-                g_ini = base[
-                    base[c_ini].notna() &
-                    (base[c_ini] >= ini_mes) &
-                    (base[c_ini] <= fim_mes)
-                ].copy()
+            anos_af = sorted(
+                df_af[c_ini].dropna().dt.year.unique().astype(int).tolist(),
+                reverse=True
+            )
+            ano_af = st.sidebar.selectbox("Ano (Afastamentos)", anos_af, key="ano_af")
 
-                # Sem previsão de retorno: iniciaram até o fim do mês E sem data de término
-                g_sem = base[
-                    base[c_ini].notna() &
-                    (base[c_ini] <= fim_mes) &
-                    base[c_fim].isna()
-                ].copy()
+            meses_af = (
+                df_af[df_af[c_ini].dt.year == ano_af][c_ini]
+                .dropna()
+                .dt.to_period('M')
+                .drop_duplicates()
+                .sort_values()
+            )
+            opcoes_mes_af = [p.strftime('%m - %b') for p in meses_af]
+            mes_af_str = st.sidebar.selectbox("Mês (Afastamentos)", opcoes_mes_af, key="mes_af")
 
-                # Total = união sem duplicatas (iniciados no mês + sem previsão)
-                g_tot = pd.concat([g_ini, g_sem]).drop_duplicates()
+            # Datas limite do mês selecionado nos afastamentos
+            mes_num_af = int(mes_af_str.split(' - ')[0])
+            ini_mes_af = pd.Timestamp(year=ano_af, month=mes_num_af, day=1)
+            fim_mes_af = ini_mes_af + pd.offsets.MonthEnd(0)
 
-                return g_ini, g_sem, g_tot  # ✅ sempre 3 valores
+            # Mês anterior (para deltas)
+            ini_ant_af = (ini_mes_af - pd.DateOffset(months=1)).replace(day=1)
+            fim_ant_af = ini_ant_af + pd.offsets.MonthEnd(0)
 
-            # ─── KPIs TOTAIS (sem filtro de empresa) ─────────────────────────
-            c_emp = next((c for c in df_af.columns if 'empresa' in c), None)
+            # ── Filtro por Empresa ──────────────────────────────────────────
+            todas_empresas = sorted(df_af[c_emp].dropna().unique().tolist())
+            emp_sel = st.sidebar.selectbox(
+                "🏢 Empresa (Afastamentos)",
+                ['Todas'] + todas_empresas,
+                key="filtro_empresa"
+            )
+            base_emp = df_af if emp_sel == 'Todas' else df_af[df_af[c_emp] == emp_sel]
 
-            df_ini_geral, df_sem_geral, df_tot_geral = calc_grupos(df_af, data_ini_mes, data_fim_mes)
+            # ── Cálculos ────────────────────────────────────────────────────
+            # Totais (todas as empresas) para KPIs gerais
+            ini_geral,  sem_geral  = calc_afastamentos(df_af,    c_ini, c_fim, ini_mes_af, fim_mes_af)
+            ini_ant_g,  sem_ant_g  = calc_afastamentos(df_af,    c_ini, c_fim, ini_ant_af, fim_ant_af)
 
-            # Mês anterior para delta (base completa)
-            ini_ant = (data_ini_mes - pd.DateOffset(months=1)).replace(day=1)
-            fim_ant = ini_ant + pd.offsets.MonthEnd(0)
-            df_ini_ant, df_sem_ant, df_tot_ant = calc_grupos(df_af, ini_ant, fim_ant)
+            # Filtrado por empresa (para gráficos e listas)
+            ini_emp,    sem_emp    = calc_afastamentos(base_emp, c_ini, c_fim, ini_mes_af, fim_mes_af)
 
-            st.markdown("---")
+            # ── KPIs ────────────────────────────────────────────────────────
+            st.markdown(f"**Período: {mes_af_str}/{ano_af}**  |  Empresa: **{emp_sel}**")
 
             k1, k2, k3 = st.columns(3)
             k1.metric(
-                "Total Afastados",
-                len(df_tot_geral),
-                delta=int(len(df_tot_geral) - len(df_tot_ant)),
+                "Iniciaram no Mês",
+                len(ini_geral),
+                delta=int(len(ini_geral) - len(ini_ant_g)),
                 delta_color="inverse",
-                help="União de: Iniciaram no mês + Sem previsão de retorno."
+                help="Afastamentos com Data início dentro do mês selecionado (todas as empresas)."
             )
             k2.metric(
-                "Iniciaram no Mês",
-                len(df_ini_geral),
-                delta=int(len(df_ini_geral) - len(df_ini_ant)),
+                "Sem Retorno Previsto",
+                len(sem_geral),
+                delta=int(len(sem_geral) - len(sem_ant_g)),
                 delta_color="inverse",
-                help="Afastamentos com início dentro do mês selecionado."
+                help=(
+                    "Data início ≤ fim do mês E "
+                    "(Data término em branco / 00/00/0000 / futura ao mês) — todas as empresas."
+                )
             )
             k3.metric(
-                "Sem Previsão de Retorno",
-                len(df_sem_geral),
-                delta=int(len(df_sem_geral) - len(df_sem_ant)),
-                delta_color="inverse",
-                help="Iniciaram até o fim do mês e não têm data de término registrada."
+                "Com Data Futura",
+                int((sem_geral[c_fim] > fim_mes_af).sum()),
+                help="Subgrupo de 'Sem Retorno Previsto': possuem data de término registrada, mas ela é posterior ao mês."
             )
 
             st.markdown("---")
 
-            # ─── FILTRO POR EMPRESA (abaixo dos KPIs totais) ─────────────────
-            if c_emp:
-                todas_empresas = sorted(
-                    df_af[df_af[c_ini].notna()][c_emp].dropna().unique().tolist()
-                )
-                emp_sel = st.selectbox(
-                    "🏢 Filtrar por Empresa",
-                    ['Todas'] + todas_empresas,
-                    key="filtro_empresa_global"
-                )
-                base_filtrada = df_af if emp_sel == 'Todas' else df_af[df_af[c_emp] == emp_sel]
-            else:
-                emp_sel = 'Todas'
-                base_filtrada = df_af
+            # ── Gráfico por Empresa ─────────────────────────────────────────
+            st.subheader("🏢 Afastados por Empresa")
 
-            # Recalcula grupos com filtro de empresa aplicado
-            df_iniciados, df_sem_prev, df_af_mes = calc_grupos(base_filtrada, data_ini_mes, data_fim_mes)
-
-            st.markdown("---")
-
-            # ─── GRÁFICO BARRAS POR EMPRESA ───────────────────────────────────
-            if c_emp:
-                # ✅ CORRIGIDO: calc_grupos retorna 3 valores (não 4)
-                _, _, df_geral_todas = calc_grupos(df_af, data_ini_mes, data_fim_mes)
-
-                resumo_emp = (
-                    df_geral_todas.groupby(c_emp)
-                    .size()
-                    .reset_index(name='Afastados')
-                    .rename(columns={c_emp: 'Empresa'})
-                    .sort_values('Afastados', ascending=True)
-                )
-                resumo_emp['cor'] = resumo_emp['Empresa'].apply(
-                    lambda e: '#e74c3c' if (emp_sel != 'Todas' and e == emp_sel) else '#3498db'
-                )
-
-                st.subheader("🏢 Afastados por Empresa")
-                fig_emp = px.bar(
-                    resumo_emp, x='Afastados', y='Empresa', orientation='h',
-                    text='Afastados', color='cor', color_discrete_map='identity',
-                )
-                fig_emp.update_traces(textposition='outside', textfont_size=12)
-                fig_emp.update_layout(
-                    height=max(200, len(resumo_emp) * 45),
-                    margin=dict(t=10, b=10, l=10, r=40),
-                    xaxis_title="Qtd Afastados", yaxis_title="", showlegend=False,
-                )
-                st.plotly_chart(fig_emp, use_container_width=True)
+            # União sem duplicatas: iniciados + sem retorno (visão geral todas empresas)
+            todos_af = pd.concat([ini_geral, sem_geral]).drop_duplicates()
+            resumo_emp = (
+                todos_af.groupby(c_emp)
+                .size()
+                .reset_index(name='Afastados')
+                .rename(columns={c_emp: 'Empresa'})
+                .sort_values('Afastados', ascending=True)
+            )
+            resumo_emp['cor'] = resumo_emp['Empresa'].apply(
+                lambda e: '#e74c3c' if (emp_sel != 'Todas' and e == emp_sel) else '#3498db'
+            )
+            fig_emp = px.bar(
+                resumo_emp, x='Afastados', y='Empresa', orientation='h',
+                text='Afastados', color='cor', color_discrete_map='identity',
+            )
+            fig_emp.update_traces(textposition='outside', textfont_size=12)
+            fig_emp.update_layout(
+                height=max(200, len(resumo_emp) * 50),
+                margin=dict(t=10, b=10, l=10, r=40),
+                xaxis_title="Qtd Afastados", yaxis_title="", showlegend=False,
+            )
+            st.plotly_chart(fig_emp, use_container_width=True)
 
             st.markdown("---")
 
-            # ─── GRÁFICO MOTIVOS ──────────────────────────────────────────────
+            # ── Gráfico Motivos (filtrado por empresa) ──────────────────────
             st.subheader("Motivos de Afastamento")
-            resumo_mot = df_af_mes[c_mot].value_counts().reset_index()
-            resumo_mot.columns = ['motivo', 'quantidade']
-            fig_mot = px.bar(
-                resumo_mot, x='quantidade', y='motivo', orientation='h',
-                text='quantidade', color_discrete_sequence=['#e67e22']
-            )
-            fig_mot.update_traces(textposition='outside')
-            fig_mot.update_layout(yaxis_title="", xaxis_title="Qtd")
-            st.plotly_chart(fig_mot, use_container_width=True)
+            # Une iniciados + sem retorno filtrado por empresa
+            af_mes_emp = pd.concat([ini_emp, sem_emp]).drop_duplicates()
+            if not af_mes_emp.empty:
+                resumo_mot = af_mes_emp[c_mot].value_counts().reset_index()
+                resumo_mot.columns = ['motivo', 'quantidade']
+                fig_mot = px.bar(
+                    resumo_mot, x='quantidade', y='motivo', orientation='h',
+                    text='quantidade', color_discrete_sequence=['#e67e22']
+                )
+                fig_mot.update_traces(textposition='outside')
+                fig_mot.update_layout(
+                    height=max(200, len(resumo_mot) * 45),
+                    yaxis_title="", xaxis_title="Qtd"
+                )
+                st.plotly_chart(fig_mot, use_container_width=True)
+            else:
+                st.info("Nenhum afastamento encontrado para o período e empresa selecionados.")
 
             st.markdown("---")
 
-            # ─── LISTAS DETALHADAS ────────────────────────────────────────────
-            with st.expander("📋 Lista detalhada de afastados (total do mês)"):
-                # ✅ CORRIGIDO: usa len(df_af_mes) em vez de total_af (variável inexistente)
-                st.caption(f"{len(df_af_mes)} registro(s) exibido(s)")
-                st.dataframe(df_af_mes, use_container_width=True)
+            # ── Listas Detalhadas ───────────────────────────────────────────
+            cols_exibir = [c for c in [c_emp, 'RE', 'Nome', 'Função', c_mot, c_ini, c_fim]
+                           if c in df_af.columns]
 
-            with st.expander("📋 Lista de afastamentos iniciados no mês"):
-                st.caption(f"{len(df_iniciados)} registro(s) exibido(s)")
-                st.dataframe(df_iniciados, use_container_width=True)
+            with st.expander(f"📋 Sem Retorno Previsto — {emp_sel} ({len(sem_emp)} registros)"):
+                st.caption(
+                    "Data início ≤ fim do mês E Data término em branco, 00/00/0000 ou futura ao mês."
+                )
+                st.dataframe(
+                    sem_emp[cols_exibir].sort_values(c_ini),
+                    use_container_width=True
+                )
 
-            with st.expander("📋 Lista sem previsão de retorno"):
-                st.caption(f"{len(df_sem_prev)} registro(s) exibido(s)")
-                st.dataframe(df_sem_prev, use_container_width=True)
+            com_data_futura = sem_emp[sem_emp[c_fim].notna() & (sem_emp[c_fim] > fim_mes_af)]
+            with st.expander(f"📋 Com Data Futura (subgrupo) — {emp_sel} ({len(com_data_futura)} registros)"):
+                st.caption("Possuem data de término registrada, mas posterior ao mês selecionado.")
+                st.dataframe(
+                    com_data_futura[cols_exibir].sort_values(c_fim),
+                    use_container_width=True
+                )
 
         else:
-            st.warning(
-                f"⚠️ Colunas mapeadas → Início: `{c_ini}` | Fim: `{c_fim}` | Motivo: `{c_mot}`\n\n"
-                f"Colunas disponíveis: {list(df_af.columns)}"
-            )
+            st.warning("⚠️ Aba de afastamentos não encontrada ou vazia.")
 
 else:
     st.info("Importe o BI_RH.xlsx para visualizar os indicadores.")
