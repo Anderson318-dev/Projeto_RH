@@ -26,23 +26,19 @@ def carregar_dados(file):
         if not df_af_raw.empty:
             df_af_raw.columns = df_af_raw.columns.str.strip().str.lower()
 
-        # ✅ MAPEAMENTO EXATO com base nas colunas reais detectadas:
-        # dtadmissao → data início do afastamento
-        # dtdemissao → data término do afastamento
-        # desc_motivoafastamento → motivo
         cols_af = list(df_af_raw.columns) if not df_af_raw.empty else []
 
-        c_ini = next((c for c in cols_af if 'dtadm'       in c
-                                         or 'dt_adm'      in c
-                                         or 'data in'     in c
-                                         or 'início'      in c
-                                         or 'inicio'      in c), None)
+        c_ini = next((c for c in cols_af if 'dtadm'   in c
+                                         or 'dt_adm'  in c
+                                         or 'data in' in c
+                                         or 'início'  in c
+                                         or 'inicio'  in c), None)
 
-        c_fim = next((c for c in cols_af if 'dtdem'       in c
-                                         or 'dt_dem'      in c
-                                         or 'data t'      in c
-                                         or 'término'     in c
-                                         or 'termino'     in c), None)
+        c_fim = next((c for c in cols_af if 'dtdem'   in c
+                                         or 'dt_dem'  in c
+                                         or 'data t'  in c
+                                         or 'término' in c
+                                         or 'termino' in c), None)
 
         c_mot = next((c for c in cols_af if 'desc_motivo' in c
                                          or 'motivo'      in c
@@ -178,19 +174,22 @@ if arquivo_subido:
                     (base[c_ini] >= ini_mes) &
                     (base[c_ini] <= fim_mes)
                 ].copy()
-                # Sem previsão: iniciaram até o fim do mês E sem data de término
-                # (muda conforme o mês pois considera c_ini <= fim_mes)
+
+                # Sem previsão de retorno: iniciaram até o fim do mês E sem data de término
                 g_sem = base[
                     base[c_ini].notna() &
                     (base[c_ini] <= fim_mes) &
                     base[c_fim].isna()
                 ].copy()
-                # Total = união sem duplicatas (iniciados + sem previsão)
-                g_tot = pd.concat([g_ini, g_sem]).drop_duplicates()
-                return g_ini, g_sem, g_tot
 
-            # ─── KPIs TOTAIS (sem filtro de empresa ainda) ───────────────────
+                # Total = união sem duplicatas (iniciados no mês + sem previsão)
+                g_tot = pd.concat([g_ini, g_sem]).drop_duplicates()
+
+                return g_ini, g_sem, g_tot  # ✅ sempre 3 valores
+
+            # ─── KPIs TOTAIS (sem filtro de empresa) ─────────────────────────
             c_emp = next((c for c in df_af.columns if 'empresa' in c), None)
+
             df_ini_geral, df_sem_geral, df_tot_geral = calc_grupos(df_af, data_ini_mes, data_fim_mes)
 
             # Mês anterior para delta (base completa)
@@ -201,24 +200,35 @@ if arquivo_subido:
             st.markdown("---")
 
             k1, k2, k3 = st.columns(3)
-            k1.metric("Total Afastados",        len(df_tot_geral),
-                      delta=int(len(df_tot_geral) - len(df_tot_ant)),
-                      delta_color="inverse",
-                      help="União de: Iniciaram no mês + Sem previsão de retorno.")
-            k2.metric("Iniciaram no Mês",        len(df_ini_geral),
-                      delta=int(len(df_ini_geral) - len(df_ini_ant)),
-                      delta_color="inverse",
-                      help="Afastamentos com início dentro do mês selecionado.")
-            k3.metric("Sem Previsão de Retorno", len(df_sem_geral),
-                      delta=int(len(df_sem_geral) - len(df_sem_ant)),
-                      delta_color="inverse",
-                      help="Iniciaram até o fim do mês e não têm data de término registrada.")
+            k1.metric(
+                "Total Afastados",
+                len(df_tot_geral),
+                delta=int(len(df_tot_geral) - len(df_tot_ant)),
+                delta_color="inverse",
+                help="União de: Iniciaram no mês + Sem previsão de retorno."
+            )
+            k2.metric(
+                "Iniciaram no Mês",
+                len(df_ini_geral),
+                delta=int(len(df_ini_geral) - len(df_ini_ant)),
+                delta_color="inverse",
+                help="Afastamentos com início dentro do mês selecionado."
+            )
+            k3.metric(
+                "Sem Previsão de Retorno",
+                len(df_sem_geral),
+                delta=int(len(df_sem_geral) - len(df_sem_ant)),
+                delta_color="inverse",
+                help="Iniciaram até o fim do mês e não têm data de término registrada."
+            )
 
             st.markdown("---")
 
             # ─── FILTRO POR EMPRESA (abaixo dos KPIs totais) ─────────────────
             if c_emp:
-                todas_empresas = sorted(df_af[df_af[c_ini].notna()][c_emp].dropna().unique().tolist())
+                todas_empresas = sorted(
+                    df_af[df_af[c_ini].notna()][c_emp].dropna().unique().tolist()
+                )
                 emp_sel = st.selectbox(
                     "🏢 Filtrar por Empresa",
                     ['Todas'] + todas_empresas,
@@ -234,9 +244,11 @@ if arquivo_subido:
 
             st.markdown("---")
 
-            # ─── GRÁFICO BARRAS POR EMPRESA (base geral, destaca seleção) ────
+            # ─── GRÁFICO BARRAS POR EMPRESA ───────────────────────────────────
             if c_emp:
-                _, _, _, df_geral_todas = calc_grupos(df_af, data_ini_mes, data_fim_mes)
+                # ✅ CORRIGIDO: calc_grupos retorna 3 valores (não 4)
+                _, _, df_geral_todas = calc_grupos(df_af, data_ini_mes, data_fim_mes)
+
                 resumo_emp = (
                     df_geral_todas.groupby(c_emp)
                     .size()
@@ -247,6 +259,7 @@ if arquivo_subido:
                 resumo_emp['cor'] = resumo_emp['Empresa'].apply(
                     lambda e: '#e74c3c' if (emp_sel != 'Todas' and e == emp_sel) else '#3498db'
                 )
+
                 st.subheader("🏢 Afastados por Empresa")
                 fig_emp = px.bar(
                     resumo_emp, x='Afastados', y='Empresa', orientation='h',
@@ -262,7 +275,7 @@ if arquivo_subido:
 
             st.markdown("---")
 
-            # ─── GRÁFICO MOTIVOS (mesma base do total) ────────────────────────
+            # ─── GRÁFICO MOTIVOS ──────────────────────────────────────────────
             st.subheader("Motivos de Afastamento")
             resumo_mot = df_af_mes[c_mot].value_counts().reset_index()
             resumo_mot.columns = ['motivo', 'quantidade']
@@ -276,14 +289,19 @@ if arquivo_subido:
 
             st.markdown("---")
 
-            # ─── LISTA DETALHADA (apenas uma, com total) ─────────────────────
-            with st.expander("📋 Lista detalhada de afastados"):
-                st.caption(f"{total_af} registro(s) exibido(s)")
+            # ─── LISTAS DETALHADAS ────────────────────────────────────────────
+            with st.expander("📋 Lista detalhada de afastados (total do mês)"):
+                # ✅ CORRIGIDO: usa len(df_af_mes) em vez de total_af (variável inexistente)
+                st.caption(f"{len(df_af_mes)} registro(s) exibido(s)")
                 st.dataframe(df_af_mes, use_container_width=True)
 
             with st.expander("📋 Lista de afastamentos iniciados no mês"):
                 st.caption(f"{len(df_iniciados)} registro(s) exibido(s)")
                 st.dataframe(df_iniciados, use_container_width=True)
+
+            with st.expander("📋 Lista sem previsão de retorno"):
+                st.caption(f"{len(df_sem_prev)} registro(s) exibido(s)")
+                st.dataframe(df_sem_prev, use_container_width=True)
 
         else:
             st.warning(
