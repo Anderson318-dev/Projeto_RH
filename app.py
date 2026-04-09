@@ -14,7 +14,6 @@ def carregar_dados(file):
 
         aba_t  = next((s for s in lista_abas if 'turn'  in s.lower()), None)
         aba_a  = next((s for s in lista_abas if 'admit' in s.lower()), None)
-        # Busca aba Afastado com ou sem espaço, strip para comparar
         aba_af = next((s for s in lista_abas if s.strip().lower() == 'afastado'), None)
 
         df_turnover  = pd.read_excel(xls, sheet_name=aba_t)
@@ -25,29 +24,24 @@ def carregar_dados(file):
             df.columns = df.columns.str.strip().str.lower()
 
         if not df_af_raw.empty:
-            # Mantém nomes originais para facilitar mapeamento por nome legível
             df_af_raw.columns = df_af_raw.columns.str.strip()
 
-        # Mapeamento fixo das colunas da aba Afastado
         C_EMP = 'Empresa'
         C_INI = 'Data início'
         C_FIM = 'Data término'
         C_MOT = 'Tipo Afastamento'
 
         if not df_af_raw.empty:
-            # Converte Data início
             df_af_raw[C_INI] = pd.to_datetime(df_af_raw[C_INI], errors='coerce')
-
-            # Data término: trata "00/00/0000" como nulo, converte o resto
-            df_af_raw[C_FIM] = df_af_raw[C_FIM].astype(str).str.strip()
-            df_af_raw[C_FIM] = df_af_raw[C_FIM].replace({'00/00/0000': None, 'nan': None, 'NaT': None, '': None})
-            df_af_raw[C_FIM] = pd.to_datetime(df_af_raw[C_FIM], errors='coerce')
+            # Trata 00/00/0000, nan, vazio → NaT
+            fim_raw = df_af_raw[C_FIM].astype(str).str.strip()
+            fim_raw = fim_raw.replace({'00/00/0000': None, 'nan': None, 'NaT': None, '': None})
+            df_af_raw[C_FIM] = pd.to_datetime(fim_raw, errors='coerce')
 
         # --- TURNOVER ---
         col_mes_t = next((c for c in df_turnover.columns if 'mês' in c or 'mes' in c), None)
         df_turnover['mês_ano'] = pd.to_datetime(df_turnover[col_mes_t], errors='coerce')
         df_turnover = df_turnover.dropna(subset=['mês_ano'])
-
         df_turnover['periodo']  = df_turnover['mês_ano'].dt.to_period('M')
         df_turnover['ano']      = df_turnover['mês_ano'].dt.year.astype(int)
         df_turnover['mes_nome'] = df_turnover['mês_ano'].dt.strftime('%m - %b')
@@ -60,7 +54,6 @@ def carregar_dados(file):
             ((df_turnover['admissões'] + df_turnover['desligamentos']) / 2) /
             df_turnover['colaboradores'].replace(0, 1)
         ) * 100
-
         df_turnover['retencao_taxa'] = (
             df_turnover['desligamentos'] /
             df_turnover['colaboradores'].replace(0, 1)
@@ -73,25 +66,28 @@ def carregar_dados(file):
         return None
 
 
-def calc_afastamentos(df, c_ini, c_fim, ini_mes, fim_mes):
+def calc_iniciados(df, c_ini, ini_mes, fim_mes):
+    """Afastamentos com Data início dentro do mês selecionado."""
+    return df[
+        df[c_ini].notna() &
+        (df[c_ini] >= ini_mes) &
+        (df[c_ini] <= fim_mes)
+    ].copy()
+
+
+def calc_total_afastados(df, c_ini, c_fim):
     """
-    Retorna dois DataFrames:
-      - iniciados: Data início dentro do mês selecionado
-      - sem_retorno: Data início <= fim do mês E (Data término nula OU futura ao fim do mês)
+    Total afastados ativos — base HOJE, SEM filtro de Data início:
+      • Data término nula / 00/00/0000 (já NaT na carga)
+      • Data término > hoje (data real do sistema)
+    Retorna: (total_df, nulos_df, futuros_df)
     """
-    base = df[df[c_ini].notna()].copy()
-
-    iniciados = base[
-        (base[c_ini] >= ini_mes) &
-        (base[c_ini] <= fim_mes)
-    ]
-
-    sem_retorno = base[
-        (base[c_ini] <= fim_mes) &
-        (base[c_fim].isna() | (base[c_fim] > fim_mes))
-    ]
-
-    return iniciados, sem_retorno
+    hoje = pd.Timestamp.today().normalize()
+    base    = df[df[c_ini].notna()].copy()
+    nulos   = base[base[c_fim].isna()]
+    futuros = base[base[c_fim].notna() & (base[c_fim] > hoje)]
+    total   = pd.concat([nulos, futuros]).drop_duplicates()
+    return total, nulos, futuros
 
 
 # ─── INTERFACE ────────────────────────────────────────────────────────────────
@@ -124,7 +120,7 @@ if arquivo_subido:
         def calc_delta(val_atual, col):
             return (val_atual - row_ant[col]) if row_ant is not None else None
 
-        msg_ajuda = "Comparação com o mês anterior. 🔼/🔽 indicam a direção."
+        msg_ajuda = "Comparação com o mês anterior."
 
         c1, c2, c3, c4, c5 = st.columns(5)
         c1.metric("Efetivo", int(row_atual['colaboradores']),
@@ -180,7 +176,7 @@ if arquivo_subido:
 
         if not df_af.empty:
 
-            # ── Filtros próprios para Afastamentos ──────────────────────────
+            # ── Filtros próprios para Afastamentos (sidebar) ────────────────
             st.sidebar.markdown("---")
             st.sidebar.subheader("🏥 Afastamentos")
 
@@ -200,16 +196,10 @@ if arquivo_subido:
             opcoes_mes_af = [p.strftime('%m - %b') for p in meses_af]
             mes_af_str = st.sidebar.selectbox("Mês (Afastamentos)", opcoes_mes_af, key="mes_af")
 
-            # Datas limite do mês selecionado nos afastamentos
             mes_num_af = int(mes_af_str.split(' - ')[0])
             ini_mes_af = pd.Timestamp(year=ano_af, month=mes_num_af, day=1)
             fim_mes_af = ini_mes_af + pd.offsets.MonthEnd(0)
 
-            # Mês anterior (para deltas)
-            ini_ant_af = (ini_mes_af - pd.DateOffset(months=1)).replace(day=1)
-            fim_ant_af = ini_ant_af + pd.offsets.MonthEnd(0)
-
-            # ── Filtro por Empresa ──────────────────────────────────────────
             todas_empresas = sorted(df_af[c_emp].dropna().unique().tolist())
             emp_sel = st.sidebar.selectbox(
                 "🏢 Empresa (Afastamentos)",
@@ -218,65 +208,77 @@ if arquivo_subido:
             )
             base_emp = df_af if emp_sel == 'Todas' else df_af[df_af[c_emp] == emp_sel]
 
-            # ── Cálculos ────────────────────────────────────────────────────
-            # Totais (todas as empresas) para KPIs gerais
-            ini_geral,  sem_geral  = calc_afastamentos(df_af,    c_ini, c_fim, ini_mes_af, fim_mes_af)
-            ini_ant_g,  sem_ant_g  = calc_afastamentos(df_af,    c_ini, c_fim, ini_ant_af, fim_ant_af)
+            hoje_label = pd.Timestamp.today().strftime('%d/%m/%Y')
 
-            # Filtrado por empresa (para gráficos e listas)
-            ini_emp,    sem_emp    = calc_afastamentos(base_emp, c_ini, c_fim, ini_mes_af, fim_mes_af)
+            # ── Cálculos ────────────────────────────────────────────────────
+            # KPIs: sempre todas as empresas
+            ini_geral                            = calc_iniciados(df_af, c_ini, ini_mes_af, fim_mes_af)
+            total_geral, nulos_geral, fut_geral  = calc_total_afastados(df_af, c_ini, c_fim)
+
+            # Delta iniciados (mês anterior)
+            ini_ant_af = (ini_mes_af - pd.DateOffset(months=1)).replace(day=1)
+            fim_ant_af = ini_ant_af + pd.offsets.MonthEnd(0)
+            ini_ant_g  = calc_iniciados(df_af, c_ini, ini_ant_af, fim_ant_af)
+
+            # Gráficos e listas: filtrado por empresa
+            ini_emp                         = calc_iniciados(base_emp, c_ini, ini_mes_af, fim_mes_af)
+            total_emp, nulos_emp, fut_emp   = calc_total_afastados(base_emp, c_ini, c_fim)
 
             # ── KPIs ────────────────────────────────────────────────────────
-            st.markdown(f"**Período: {mes_af_str}/{ano_af}**  |  Empresa: **{emp_sel}**")
+            st.markdown(
+                f"**Período: {mes_af_str}/{ano_af}**  |  "
+                f"Empresa: **{emp_sel}**  |  "
+                f"Referência: **{hoje_label}**"
+            )
 
-            k1, k2, k3 = st.columns(3)
+            k1, k2, k3, k4 = st.columns(4)
             k1.metric(
                 "Iniciaram no Mês",
                 len(ini_geral),
                 delta=int(len(ini_geral) - len(ini_ant_g)),
                 delta_color="inverse",
-                help="Afastamentos com Data início dentro do mês selecionado (todas as empresas)."
+                help=f"Data início em {mes_af_str}/{ano_af} — todas as empresas."
             )
             k2.metric(
-                "Sem Retorno Previsto",
-                len(sem_geral),
-                delta=int(len(sem_geral) - len(sem_ant_g)),
-                delta_color="inverse",
+                "Total Afastados",
+                len(total_geral),
                 help=(
-                    "Data início ≤ fim do mês E "
-                    "(Data término em branco / 00/00/0000 / futura ao mês) — todas as empresas."
+                    f"Nulos/00/00/0000 ({len(nulos_geral)}) + "
+                    f"Data término > {hoje_label} ({len(fut_geral)}) — toda a base."
                 )
             )
             k3.metric(
-                "Com Data Futura",
-                int((sem_geral[c_fim] > fim_mes_af).sum()),
-                help="Subgrupo de 'Sem Retorno Previsto': possuem data de término registrada, mas ela é posterior ao mês."
+                "Sem Data (00/00/0000)",
+                len(nulos_geral),
+                help="Subgrupo: Data término em branco ou 00/00/0000."
+            )
+            k4.metric(
+                "Com Retorno Futuro",
+                len(fut_geral),
+                help=f"Subgrupo: Data término registrada e posterior a {hoje_label}."
             )
 
             st.markdown("---")
 
             # ── Gráfico por Empresa ─────────────────────────────────────────
-            st.subheader("🏢 Afastados por Empresa")
-
-            # União sem duplicatas: iniciados + sem retorno (visão geral todas empresas)
-            todos_af = pd.concat([ini_geral, sem_geral]).drop_duplicates()
-            resumo_emp = (
-                todos_af.groupby(c_emp)
+            st.subheader("🏢 Total de Afastados por Empresa")
+            resumo_emp_df = (
+                total_geral.groupby(c_emp)
                 .size()
                 .reset_index(name='Afastados')
                 .rename(columns={c_emp: 'Empresa'})
                 .sort_values('Afastados', ascending=True)
             )
-            resumo_emp['cor'] = resumo_emp['Empresa'].apply(
+            resumo_emp_df['cor'] = resumo_emp_df['Empresa'].apply(
                 lambda e: '#e74c3c' if (emp_sel != 'Todas' and e == emp_sel) else '#3498db'
             )
             fig_emp = px.bar(
-                resumo_emp, x='Afastados', y='Empresa', orientation='h',
+                resumo_emp_df, x='Afastados', y='Empresa', orientation='h',
                 text='Afastados', color='cor', color_discrete_map='identity',
             )
             fig_emp.update_traces(textposition='outside', textfont_size=12)
             fig_emp.update_layout(
-                height=max(200, len(resumo_emp) * 50),
+                height=max(200, len(resumo_emp_df) * 50),
                 margin=dict(t=10, b=10, l=10, r=40),
                 xaxis_title="Qtd Afastados", yaxis_title="", showlegend=False,
             )
@@ -286,10 +288,8 @@ if arquivo_subido:
 
             # ── Gráfico Motivos (filtrado por empresa) ──────────────────────
             st.subheader("Motivos de Afastamento")
-            # Une iniciados + sem retorno filtrado por empresa
-            af_mes_emp = pd.concat([ini_emp, sem_emp]).drop_duplicates()
-            if not af_mes_emp.empty:
-                resumo_mot = af_mes_emp[c_mot].value_counts().reset_index()
+            if not total_emp.empty:
+                resumo_mot = total_emp[c_mot].value_counts().reset_index()
                 resumo_mot.columns = ['motivo', 'quantidade']
                 fig_mot = px.bar(
                     resumo_mot, x='quantidade', y='motivo', orientation='h',
@@ -302,7 +302,7 @@ if arquivo_subido:
                 )
                 st.plotly_chart(fig_mot, use_container_width=True)
             else:
-                st.info("Nenhum afastamento encontrado para o período e empresa selecionados.")
+                st.info("Nenhum afastamento ativo encontrado para a empresa selecionada.")
 
             st.markdown("---")
 
@@ -310,20 +310,20 @@ if arquivo_subido:
             cols_exibir = [c for c in [c_emp, 'RE', 'Nome', 'Função', c_mot, c_ini, c_fim]
                            if c in df_af.columns]
 
-            with st.expander(f"📋 Sem Retorno Previsto — {emp_sel} ({len(sem_emp)} registros)"):
-                st.caption(
-                    "Data início ≤ fim do mês E Data término em branco, 00/00/0000 ou futura ao mês."
-                )
+            with st.expander(
+                f"📋 Sem Data de Retorno (nulo / 00/00/0000) — {emp_sel} ({len(nulos_emp)} registros)"
+            ):
                 st.dataframe(
-                    sem_emp[cols_exibir].sort_values(c_ini),
+                    nulos_emp[cols_exibir].sort_values(c_ini),
                     use_container_width=True
                 )
 
-            com_data_futura = sem_emp[sem_emp[c_fim].notna() & (sem_emp[c_fim] > fim_mes_af)]
-            with st.expander(f"📋 Com Data Futura (subgrupo) — {emp_sel} ({len(com_data_futura)} registros)"):
-                st.caption("Possuem data de término registrada, mas posterior ao mês selecionado.")
+            with st.expander(
+                f"📋 Com Data de Retorno Futura — {emp_sel} ({len(fut_emp)} registros)"
+            ):
+                st.caption(f"Data término posterior a hoje ({hoje_label}).")
                 st.dataframe(
-                    com_data_futura[cols_exibir].sort_values(c_fim),
+                    fut_emp[cols_exibir].sort_values(c_fim),
                     use_container_width=True
                 )
 
