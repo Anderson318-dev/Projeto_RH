@@ -170,31 +170,53 @@ if arquivo_subido:
 
         if not df_af.empty and c_ini and c_fim and c_mot:
 
-            hoje = pd.Timestamp.today().normalize()
-
-            # ─── FUNÇÃO AUXILIAR: calcula os 4 grupos para qualquer período ──
+            # ─── FUNÇÃO AUXILIAR: calcula grupos para qualquer período/base ───
             def calc_grupos(base, ini_mes, fim_mes):
-                # Sem previsão: c_fim nulo (NaT) — independe do mês
-                g_sem = base[base[c_ini].notna() & base[c_fim].isna()].copy()
-                # Retorno previsto: c_fim > fim do mês selecionado (futuro em relação ao mês)
-                g_ret = base[
-                    base[c_ini].notna() &
-                    base[c_fim].notna() &
-                    (base[c_fim] > fim_mes)
-                ].copy()
-                # Iniciaram no mês
+                # Iniciaram no mês: c_ini dentro do período
                 g_ini = base[
                     base[c_ini].notna() &
                     (base[c_ini] >= ini_mes) &
                     (base[c_ini] <= fim_mes)
                 ].copy()
-                # Total = união sem duplicatas
-                g_tot = pd.concat([g_sem, g_ret, g_ini]).drop_duplicates()
-                return g_sem, g_ret, g_ini, g_tot
+                # Sem previsão: iniciaram até o fim do mês E sem data de término
+                # (muda conforme o mês pois considera c_ini <= fim_mes)
+                g_sem = base[
+                    base[c_ini].notna() &
+                    (base[c_ini] <= fim_mes) &
+                    base[c_fim].isna()
+                ].copy()
+                # Total = união sem duplicatas (iniciados + sem previsão)
+                g_tot = pd.concat([g_ini, g_sem]).drop_duplicates()
+                return g_ini, g_sem, g_tot
 
-            # ─── FILTRO POR EMPRESA ───────────────────────────────────────────
+            # ─── KPIs TOTAIS (sem filtro de empresa ainda) ───────────────────
             c_emp = next((c for c in df_af.columns if 'empresa' in c), None)
+            df_ini_geral, df_sem_geral, df_tot_geral = calc_grupos(df_af, data_ini_mes, data_fim_mes)
 
+            # Mês anterior para delta (base completa)
+            ini_ant = (data_ini_mes - pd.DateOffset(months=1)).replace(day=1)
+            fim_ant = ini_ant + pd.offsets.MonthEnd(0)
+            df_ini_ant, df_sem_ant, df_tot_ant = calc_grupos(df_af, ini_ant, fim_ant)
+
+            st.markdown("---")
+
+            k1, k2, k3 = st.columns(3)
+            k1.metric("Total Afastados",        len(df_tot_geral),
+                      delta=int(len(df_tot_geral) - len(df_tot_ant)),
+                      delta_color="inverse",
+                      help="União de: Iniciaram no mês + Sem previsão de retorno.")
+            k2.metric("Iniciaram no Mês",        len(df_ini_geral),
+                      delta=int(len(df_ini_geral) - len(df_ini_ant)),
+                      delta_color="inverse",
+                      help="Afastamentos com início dentro do mês selecionado.")
+            k3.metric("Sem Previsão de Retorno", len(df_sem_geral),
+                      delta=int(len(df_sem_geral) - len(df_sem_ant)),
+                      delta_color="inverse",
+                      help="Iniciaram até o fim do mês e não têm data de término registrada.")
+
+            st.markdown("---")
+
+            # ─── FILTRO POR EMPRESA (abaixo dos KPIs totais) ─────────────────
             if c_emp:
                 todas_empresas = sorted(df_af[df_af[c_ini].notna()][c_emp].dropna().unique().tolist())
                 emp_sel = st.selectbox(
@@ -207,39 +229,8 @@ if arquivo_subido:
                 emp_sel = 'Todas'
                 base_filtrada = df_af
 
-            # ─── GRUPOS DO MÊS ATUAL ─────────────────────────────────────────
-            df_sem_prev, df_retorno, df_iniciados, df_af_mes = calc_grupos(
-                base_filtrada, data_ini_mes, data_fim_mes
-            )
-            total_af = len(df_af_mes)
-
-            # ─── GRUPOS DO MÊS ANTERIOR (para delta) ─────────────────────────
-            ini_ant = (data_ini_mes - pd.DateOffset(months=1)).replace(day=1)
-            fim_ant = ini_ant + pd.offsets.MonthEnd(0)
-            sem_ant, ret_ant, ini_ant_df, tot_ant_df = calc_grupos(
-                base_filtrada, ini_ant, fim_ant
-            )
-
-            st.markdown("---")
-
-            # ─── KPIs + DELTA ─────────────────────────────────────────────────
-            k1, k2, k3, k4 = st.columns(4)
-            k1.metric("Total Afastados",        total_af,
-                      delta=int(total_af - len(tot_ant_df)),
-                      delta_color="inverse",
-                      help="União de: Iniciaram no mês + Sem previsão + Retorno previsto.")
-            k2.metric("Iniciaram no Mês",        len(df_iniciados),
-                      delta=int(len(df_iniciados) - len(ini_ant_df)),
-                      delta_color="inverse",
-                      help="Afastamentos com início dentro do mês selecionado.")
-            k3.metric("Sem Previsão de Retorno", len(df_sem_prev),
-                      delta=int(len(df_sem_prev) - len(sem_ant)),
-                      delta_color="inverse",
-                      help="Afastados com data de término nula, vazia ou 00/00/0000.")
-            k4.metric("Retorno Previsto",         len(df_retorno),
-                      delta=int(len(df_retorno) - len(ret_ant)),
-                      delta_color="inverse",
-                      help="Afastados com data de término após o fim do mês selecionado.")
+            # Recalcula grupos com filtro de empresa aplicado
+            df_iniciados, df_sem_prev, df_af_mes = calc_grupos(base_filtrada, data_ini_mes, data_fim_mes)
 
             st.markdown("---")
 
